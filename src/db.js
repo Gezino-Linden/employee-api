@@ -1,24 +1,16 @@
 require("dotenv").config();
 const { Pool } = require("pg");
 
+const isProd = process.env.NODE_ENV === "production";
+
 const pool = new Pool({
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT || 5432),
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  ssl: { rejectUnauthorized: false },
-
-  max: 5,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-  keepAlive: true,
+  connectionString: process.env.DATABASE_URL,
+  ssl: isProd ? { rejectUnauthorized: false } : { rejectUnauthorized: false }, // allow Render SSL locally too
 });
 
-pool.on("error", (err) => {
-  console.error("PostgreSQL pool error ❌", err.message);
-});
+pool
+  .query("SELECT NOW()")
+  .then(() => console.log("PostgreSQL connected ✅"))
+  .catch((err) => console.error("PostgreSQL connection error ❌", err.message));
 
-module.exports = {
-  query: (text, params) => pool.query(text, params),
-};
+module.exports = pool;
