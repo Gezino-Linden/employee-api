@@ -236,3 +236,55 @@ exports.deleteEmployee = asyncHandler(async (req, res) => {
 
   res.status(204).send();
 });
+
+
+exports.updateEmployeeSalary = async (req, res) => {
+  const employeeId = Number(req.params.id);
+  const { salary } = req.body;
+
+  if (!Number.isInteger(employeeId)) {
+    return res.status(400).json({ error: "invalid employee id" });
+  }
+
+  const newSalary = Number(salary);
+  if (!Number.isFinite(newSalary) || newSalary <= 0) {
+    return res.status(400).json({ error: "salary must be a positive number" });
+  }
+
+  try {
+    await db.query("BEGIN");
+
+    // 1) get current salary
+    const current = await db.query(
+      "SELECT id, salary FROM employees WHERE id = $1",
+      [employeeId]
+    );
+
+    if (current.rows.length === 0) {
+      await db.query("ROLLBACK");
+      return res.status(404).json({ error: "employee not found" });
+    }
+
+    const oldSalary = Number(current.rows[0].salary);
+
+    // 2) update salary
+    const updated = await db.query(
+      "UPDATE employees SET salary = $1 WHERE id = $2 RETURNING id, first_name, last_name, email, department, position, salary, created_at",
+      [newSalary, employeeId]
+    );
+
+    // 3) insert audit log
+    await db.query(
+      `INSERT INTO salary_history (employee_id, old_salary, new_salary, changed_by_user_id)
+       VALUES ($1, $2, $3, $4)`,
+      [employeeId, oldSalary, newSalary, req.user.id]
+    );
+
+    await db.query("COMMIT");
+    return res.json(updated.rows[0]);
+  } catch (err) {
+    await db.query("ROLLBACK");
+    console.log(err);
+    return res.status(500).json({ error: "salary update failed" });
+  }
+};

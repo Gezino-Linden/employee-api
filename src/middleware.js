@@ -30,3 +30,11 @@ function requireRole(role) {
 }
 
 module.exports = { requireAuth, requireRole };
+
+exports.requireAdmin = (req, res, next) => {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ error: "forbidden: admin only" });
+  }
+  next();
+};
+

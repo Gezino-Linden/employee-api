@@ -1,21 +1,47 @@
 const express = require("express");
-const {
-  getEmployees,
-  getEmployeeById,
-  createEmployee,
-  updateEmployee,
-  deleteEmployee,
-} = require("../controllers/employees.controller");
-
-const { requireAuth, requireRole } = require("../middleware");
-
 const router = express.Router();
 
+const employeesController = require("../controllers/employees.controller");
+const { requireAuth, requireRole } = require("../middleware");
+
 // admin-only employees module
-router.get("/", requireAuth, requireRole("admin"), getEmployees);
-router.get("/:id", requireAuth, requireRole("admin"), getEmployeeById);
-router.post("/", requireAuth, requireRole("admin"), createEmployee);
-router.put("/:id", requireAuth, requireRole("admin"), updateEmployee);
-router.delete("/:id", requireAuth, requireRole("admin"), deleteEmployee);
+router.get(
+  "/",
+  requireAuth,
+  requireRole("admin"),
+  employeesController.getEmployees
+);
+router.get(
+  "/:id",
+  requireAuth,
+  requireRole("admin"),
+  employeesController.getEmployeeById
+);
+router.post(
+  "/",
+  requireAuth,
+  requireRole("admin"),
+  employeesController.createEmployee
+);
+router.put(
+  "/:id",
+  requireAuth,
+  requireRole("admin"),
+  employeesController.updateEmployee
+);
+router.delete(
+  "/:id",
+  requireAuth,
+  requireRole("admin"),
+  employeesController.deleteEmployee
+);
+
+// 🔥 salary update with audit log (admin only)
+router.patch(
+  "/:id/salary",
+  requireAuth,
+  requireRole("admin"),
+  employeesController.updateEmployeeSalary
+);
 
 module.exports = router;
