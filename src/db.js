@@ -3,16 +3,22 @@ const { Pool } = require("pg");
 
 const pool = new Pool({
   host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT),
+  port: Number(process.env.DB_PORT || 5432),
+  database: process.env.DB_NAME,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  ssl: { rejectUnauthorized: false },
+
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+  keepAlive: true,
 });
 
-// quick connection test
-pool
-  .query("SELECT NOW()")
-  .then(() => console.log("PostgreSQL connected ✅"))
-  .catch((err) => console.error("PostgreSQL connection error ❌", err.message));
+pool.on("error", (err) => {
+  console.error("PostgreSQL pool error ❌", err.message);
+});
 
-module.exports = pool;
+module.exports = {
+  query: (text, params) => pool.query(text, params),
+};

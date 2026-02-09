@@ -1,4 +1,6 @@
 const errorHandler = require("./errorHandler");
+const employeesRoutes = require("./routes/employees.routes");
+
 
 const express = require("express");
 require("dotenv").config();
@@ -36,7 +38,11 @@ app.get("/me", requireAuth, async (req, res) => {
 // Routes
 app.use("/auth", authRoutes);
 app.use("/users", usersRoutes);
+app.use("/employees", employeesRoutes);
+
 app.use(errorHandler);
+
+
 
 
 const PORT = process.env.PORT || 4000;
