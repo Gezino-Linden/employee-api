@@ -8,57 +8,69 @@ exports.getEmployees = asyncHandler(async (req, res) => {
     Math.max(parseInt(req.query.limit || "10", 10), 1),
     50
   );
-  const search = (req.query.search || "").trim();
   const offset = (page - 1) * limit;
 
-  if (search) {
-    const countResult = await db.query(
-      `SELECT COUNT(*)::int AS total
-       FROM employees
-       WHERE first_name ILIKE $1 OR last_name ILIKE $1 OR email ILIKE $1 OR department ILIKE $1 OR position ILIKE $1`,
-      [`%${search}%`]
-    );
-    const total = countResult.rows[0].total;
+  // FILTERS first
+  const department = (req.query.department || "").trim();
+  const position = (req.query.position || "").trim();
 
-    const listResult = await db.query(
-      `SELECT id, first_name, last_name, email, department, position, salary, created_at
-       FROM employees
-       WHERE first_name ILIKE $1 OR last_name ILIKE $1 OR email ILIKE $1 OR department ILIKE $1 OR position ILIKE $1
-       ORDER BY id DESC
-       LIMIT $2 OFFSET $3`,
-      [`%${search}%`, limit, offset]
-    );
+  // Optional search
+  const search = (req.query.search || "").trim();
 
-    return res.json({
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-      data: listResult.rows,
-    });
+  const where = [];
+  const values = [];
+  let i = 1;
+
+  // department filter (case-insensitive)
+  if (department) {
+    values.push(department);
+    where.push(`department ILIKE $${i++}`);
   }
 
+  // position filter (case-insensitive)
+  if (position) {
+    values.push(position);
+    where.push(`position ILIKE $${i++}`);
+  }
+
+  // search across multiple columns
+  if (search) {
+    values.push(`%${search}%`);
+    where.push(
+      `(first_name ILIKE $${i} OR last_name ILIKE $${i} OR email ILIKE $${i} OR department ILIKE $${i} OR position ILIKE $${i})`
+    );
+    i++;
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  // COUNT
   const countResult = await db.query(
-    "SELECT COUNT(*)::int AS total FROM employees"
+    `SELECT COUNT(*)::int AS total FROM employees ${whereSql}`,
+    values
   );
   const total = countResult.rows[0].total;
 
+  // LIST
+  values.push(limit, offset);
   const listResult = await db.query(
     `SELECT id, first_name, last_name, email, department, position, salary, created_at
      FROM employees
+     ${whereSql}
      ORDER BY id DESC
-     LIMIT $1 OFFSET $2`,
-    [limit, offset]
+     LIMIT $${i} OFFSET $${i + 1}`,
+    values
   );
 
-  res.json({
+  return res.json({
     page,
     limit,
     total,
-    totalPages: Math.ceil(total / limit),
+    totalPages: total === 0 ? 0 : Math.ceil(total / limit),
     data: listResult.rows,
   });
 });
+
 
 // GET one employee
 exports.getEmployeeById = asyncHandler(async (req, res) => {
