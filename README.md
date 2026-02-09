@@ -7,6 +7,14 @@ A simple REST API built with **Node.js (Express)** and **PostgreSQL** featuring:
 - Users CRUD
 - Pagination + search on users endpoint
 
+### Employees (admin only, requires Bearer token)
+- GET /employees?page=1&limit=10&search=john
+- GET /employees/:id
+- POST /employees
+- PUT /employees/:id
+- DELETE /employees/:id
+
+
 ## Tech Stack
 - Node.js + Express
 - PostgreSQL
