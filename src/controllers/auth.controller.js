@@ -4,40 +4,69 @@ const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 
+
 // REGISTER
 exports.register = async (req, res) => {
   const { name, email, password } = req.body;
 
+  // validation
   if (!name || typeof name !== "string" || name.trim().length < 2) {
     return res
       .status(400)
       .json({ error: "name must be at least 2 characters" });
   }
+
   if (!email || typeof email !== "string" || !email.includes("@")) {
     return res.status(400).json({ error: "valid email required" });
   }
+
   if (!password || typeof password !== "string" || password.length < 6) {
     return res
       .status(400)
       .json({ error: "password must be at least 6 characters" });
   }
 
+  const cleanName = name.trim();
+  const cleanEmail = email.trim().toLowerCase();
+
   try {
     const hashed = await bcrypt.hash(password, 10);
 
-    const result = await db.query(
-      "INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id, name, email",
-      [name.trim(), email.trim().toLowerCase(), hashed]
+    // start transaction
+    await db.query("BEGIN");
+
+    // count users properly (force integer)
+    const countResult = await db.query(
+      "SELECT COUNT(*)::int AS count FROM users"
+    );
+    const userCount = countResult.rows[0].count;
+
+    // first user becomes admin
+    const role = userCount === 0 ? "admin" : "user";
+
+    const insertResult = await db.query(
+      `INSERT INTO users (name, email, password, role)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, name, email, role`,
+      [cleanName, cleanEmail, hashed, role]
     );
 
-    res.status(201).json(result.rows[0]);
+    await db.query("COMMIT");
+
+    return res.status(201).json(insertResult.rows[0]);
   } catch (err) {
-    if (err.code === "23505")
+    await db.query("ROLLBACK");
+
+    if (err.code === "23505") {
       return res.status(409).json({ error: "email already exists" });
+    }
+
     console.log(err);
-    res.status(500).json({ error: "register failed" });
+    return res.status(500).json({ error: "register failed" });
   }
 };
+
+
 
 // LOGIN
 exports.login = async (req, res) => {
