@@ -44,4 +44,12 @@ router.patch(
   employeesController.updateEmployeeSalary
 );
 
+router.patch(
+  "/:id/restore",
+  requireAuth,
+  requireRole("admin"),
+  employeesController.restoreEmployee
+);
+
+
 module.exports = router;

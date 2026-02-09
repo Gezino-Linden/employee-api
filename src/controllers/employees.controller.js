@@ -10,30 +10,35 @@ exports.getEmployees = asyncHandler(async (req, res) => {
   );
   const offset = (page - 1) * limit;
 
-  // FILTERS first
   const department = (req.query.department || "").trim();
   const position = (req.query.position || "").trim();
-
-  // Optional search
   const search = (req.query.search || "").trim();
+
+  // ✅ active filter
+  // default = true (hide soft-deleted)
+  const activeParam = (req.query.active || "true").toString().toLowerCase();
+  const showAll = activeParam === "all";
+  const isActive = activeParam === "false" ? false : true;
 
   const where = [];
   const values = [];
   let i = 1;
 
-  // department filter (case-insensitive)
+  if (!showAll) {
+    values.push(isActive);
+    where.push(`is_active = $${i++}`);
+  }
+
   if (department) {
     values.push(department);
     where.push(`department ILIKE $${i++}`);
   }
 
-  // position filter (case-insensitive)
   if (position) {
     values.push(position);
     where.push(`position ILIKE $${i++}`);
   }
 
-  // search across multiple columns
   if (search) {
     values.push(`%${search}%`);
     where.push(
@@ -44,17 +49,16 @@ exports.getEmployees = asyncHandler(async (req, res) => {
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-  // COUNT
   const countResult = await db.query(
     `SELECT COUNT(*)::int AS total FROM employees ${whereSql}`,
     values
   );
   const total = countResult.rows[0].total;
 
-  // LIST
   values.push(limit, offset);
+
   const listResult = await db.query(
-    `SELECT id, first_name, last_name, email, department, position, salary, created_at
+    `SELECT id, first_name, last_name, email, department, position, salary, is_active, created_at
      FROM employees
      ${whereSql}
      ORDER BY id DESC
@@ -70,6 +74,7 @@ exports.getEmployees = asyncHandler(async (req, res) => {
     data: listResult.rows,
   });
 });
+
 
 
 // GET one employee
@@ -240,14 +245,22 @@ exports.deleteEmployee = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: "invalid id" });
 
   const result = await db.query(
-    "DELETE FROM employees WHERE id = $1 RETURNING id",
+    `UPDATE employees
+     SET is_active = FALSE
+     WHERE id = $1 AND is_active = TRUE
+     RETURNING id`,
     [id]
   );
-  if (result.rows.length === 0)
-    return res.status(404).json({ error: "employee not found" });
 
-  res.status(204).send();
+  if (result.rows.length === 0) {
+    return res
+      .status(404)
+      .json({ error: "employee not found or already inactive" });
+  }
+
+  return res.status(204).send();
 });
+
 
 
 exports.updateEmployeeSalary = async (req, res) => {
@@ -300,3 +313,26 @@ exports.updateEmployeeSalary = async (req, res) => {
     return res.status(500).json({ error: "salary update failed" });
   }
 };
+
+exports.restoreEmployee = asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id))
+    return res.status(400).json({ error: "invalid id" });
+
+  const result = await db.query(
+    `UPDATE employees
+     SET is_active = TRUE
+     WHERE id = $1 AND is_active = FALSE
+     RETURNING id, first_name, last_name, email, department, position, salary, is_active, created_at`,
+    [id]
+  );
+
+  if (result.rows.length === 0) {
+    return res
+      .status(404)
+      .json({ error: "employee not found or already active" });
+  }
+
+  return res.json(result.rows[0]);
+});
+
