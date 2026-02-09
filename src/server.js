@@ -1,14 +1,16 @@
-const errorHandler = require("./errorHandler");
-const employeesRoutes = require("./routes/employees.routes");
-
-
 const express = require("express");
-require("dotenv").config();
+
+// Load .env only when running locally (NOT on Render/production)
+if (process.env.NODE_ENV !== "production") {
+  require("dotenv").config();
+}
 
 const db = require("./db");
 const authRoutes = require("./routes/auth.routes");
 const usersRoutes = require("./routes/users.routes");
+const employeesRoutes = require("./routes/employees.routes");
 const { requireAuth } = require("./middleware");
+const errorHandler = require("./errorHandler");
 
 const app = express();
 app.use(express.json());
@@ -28,10 +30,10 @@ app.get("/me", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "user not found" });
     }
 
-    res.json(result.rows[0]);
+    return res.json(result.rows[0]);
   } catch (err) {
     console.log(err);
-    res.status(500).json({ error: "database error" });
+    return res.status(500).json({ error: "database error" });
   }
 });
 
@@ -40,12 +42,10 @@ app.use("/auth", authRoutes);
 app.use("/users", usersRoutes);
 app.use("/employees", employeesRoutes);
 
+// Error handler LAST
 app.use(errorHandler);
 
-
-
-
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () =>
-  console.log(`Server running on http://localhost:${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});
