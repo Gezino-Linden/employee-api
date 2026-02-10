@@ -22,10 +22,12 @@ exports.getSummary = async (req, res) => {
     );
 
     return res.json({
+      version: "0ccd411-rounding",
       totalEmployees: totalEmployeesRes.rows[0].total,
       totalSalary: Number(totalSalaryRes.rows[0].total_salary),
       averageSalary: Number(avgSalaryRes.rows[0].avg_salary),
     });
+
   } catch (err) {
     console.log("REPORT SUMMARY ERROR:", err);
     return res.status(500).json({ error: err.message });
