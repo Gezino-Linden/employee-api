@@ -1,6 +1,8 @@
 const db = require("../db");
 
-// ================= SUMMARY REPORT =================
+// =========================
+// 📊 SUMMARY REPORT
+// =========================
 exports.getSummary = async (req, res) => {
   try {
     const totalEmployeesRes = await db.query(
@@ -8,17 +10,21 @@ exports.getSummary = async (req, res) => {
     );
 
     const totalSalaryRes = await db.query(
-      "SELECT COALESCE(SUM(salary),0)::numeric AS total_salary FROM employees WHERE is_active = true"
+      `SELECT COALESCE(ROUND(SUM(salary), 2), 0) AS total_salary
+       FROM employees
+       WHERE is_active = true`
     );
 
     const avgSalaryRes = await db.query(
-      "SELECT COALESCE(AVG(salary),0)::numeric AS avg_salary FROM employees WHERE is_active = true"
+      `SELECT COALESCE(ROUND(AVG(salary), 2), 0) AS avg_salary
+       FROM employees
+       WHERE is_active = true`
     );
 
     return res.json({
       totalEmployees: totalEmployeesRes.rows[0].total,
-      totalSalary: totalSalaryRes.rows[0].total_salary,
-      averageSalary: avgSalaryRes.rows[0].avg_salary,
+      totalSalary: Number(totalSalaryRes.rows[0].total_salary),
+      averageSalary: Number(avgSalaryRes.rows[0].avg_salary),
     });
   } catch (err) {
     console.log("REPORT SUMMARY ERROR:", err);
@@ -26,40 +32,63 @@ exports.getSummary = async (req, res) => {
   }
 };
 
-// ================= SALARY BY DEPARTMENT =================
+// =========================
+// 📊 SALARY BY DEPARTMENT
+// =========================
 exports.getSalaryByDepartment = async (req, res) => {
   try {
     const result = await db.query(`
       SELECT 
         department,
         COUNT(*)::int AS employees,
-        COALESCE(SUM(salary),0)::numeric AS total_salary,
-        COALESCE(AVG(salary),0)::numeric AS avg_salary
+        COALESCE(ROUND(SUM(salary), 2), 0) AS total_salary,
+        COALESCE(ROUND(AVG(salary), 2), 0) AS avg_salary
       FROM employees
       WHERE is_active = true
       GROUP BY department
       ORDER BY total_salary DESC
     `);
 
-    return res.json(result.rows);
+    // convert numeric strings → numbers
+    const cleaned = result.rows.map((r) => ({
+      department: r.department,
+      employees: r.employees,
+      total_salary: Number(r.total_salary),
+      avg_salary: Number(r.avg_salary),
+    }));
+
+    return res.json(cleaned);
   } catch (err) {
     console.log("DEPARTMENT REPORT ERROR:", err);
     return res.status(500).json({ error: err.message });
   }
 };
 
-// ================= HIGHEST PAID =================
+// =========================
+// 💰 TOP 5 HIGHEST PAID
+// =========================
 exports.getHighestPaid = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT id, first_name, last_name, department, position, salary
+      SELECT 
+        id,
+        first_name,
+        last_name,
+        department,
+        position,
+        ROUND(salary, 2) AS salary
       FROM employees
       WHERE is_active = true
       ORDER BY salary DESC
       LIMIT 5
     `);
 
-    return res.json(result.rows);
+    const cleaned = result.rows.map((r) => ({
+      ...r,
+      salary: Number(r.salary),
+    }));
+
+    return res.json(cleaned);
   } catch (err) {
     console.log("HIGHEST PAID ERROR:", err);
     return res.status(500).json({ error: err.message });
