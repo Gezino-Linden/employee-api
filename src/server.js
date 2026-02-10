@@ -11,6 +11,8 @@ const usersRoutes = require("./routes/users.routes");
 const employeesRoutes = require("./routes/employees.routes");
 const { requireAuth } = require("./middleware");
 const errorHandler = require("./errorHandler");
+const reportsRoutes = require("./routes/reports.routes");
+
 
 const app = express();
 app.use(express.json());
@@ -41,6 +43,7 @@ app.get("/me", requireAuth, async (req, res) => {
 app.use("/auth", authRoutes);
 app.use("/users", usersRoutes);
 app.use("/employees", employeesRoutes);
+app.use("/reports", reportsRoutes);
 
 // Error handler LAST
 app.use(errorHandler);

@@ -239,27 +239,26 @@ exports.updateEmployee = asyncHandler(async (req, res) => {
 });
 
 // DELETE employee
-exports.deleteEmployee = asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id))
-    return res.status(400).json({ error: "invalid id" });
+exports.deleteEmployee = async (req, res) => {
+  const { id } = req.params;
 
   const result = await db.query(
     `UPDATE employees
-     SET is_active = FALSE
-     WHERE id = $1 AND is_active = TRUE
+     SET is_active = false, deleted_at = NOW()
+     WHERE id = $1 AND is_active = true
      RETURNING id`,
     [id]
   );
 
-  if (result.rows.length === 0) {
+  if (result.rowCount === 0) {
     return res
       .status(404)
-      .json({ error: "employee not found or already inactive" });
+      .json({ error: "employee not found or already deleted" });
   }
 
   return res.status(204).send();
-});
+};
+
 
 
 
@@ -314,25 +313,22 @@ exports.updateEmployeeSalary = async (req, res) => {
   }
 };
 
-exports.restoreEmployee = asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id))
-    return res.status(400).json({ error: "invalid id" });
+exports.restoreEmployee = async (req, res) => {
+  const { id } = req.params;
 
   const result = await db.query(
     `UPDATE employees
-     SET is_active = TRUE
-     WHERE id = $1 AND is_active = FALSE
-     RETURNING id, first_name, last_name, email, department, position, salary, is_active, created_at`,
+     SET is_active = true, deleted_at = NULL
+     WHERE id = $1 AND is_active = false
+     RETURNING id, first_name, last_name, email, department, position, salary, created_at`,
     [id]
   );
 
-  if (result.rows.length === 0) {
-    return res
-      .status(404)
-      .json({ error: "employee not found or already active" });
+  if (result.rowCount === 0) {
+    return res.status(404).json({ error: "employee not found or not deleted" });
   }
 
   return res.json(result.rows[0]);
-});
+};
+
 
