@@ -2,65 +2,63 @@ const db = require("../db");
 
 exports.getSummary = async (req, res) => {
   try {
-    // total employees (active)
-    const totalEmployees = await db.query(
-      "SELECT COUNT(*)::int FROM employees WHERE active = true"
+    const totalEmployeesRes = await db.query(
+      "SELECT COUNT(*)::int AS total FROM employees WHERE is_active = true"
     );
 
-    // total salary bill
-    const totalSalary = await db.query(
-      "SELECT COALESCE(SUM(salary),0)::numeric AS total FROM employees WHERE active = true"
+    const totalSalaryRes = await db.query(
+      "SELECT COALESCE(SUM(salary), 0)::numeric AS total_salary FROM employees WHERE is_active = true"
     );
 
-    // avg salary
-    const avgSalary = await db.query(
-      "SELECT COALESCE(AVG(salary),0)::numeric AS avg FROM employees WHERE active = true"
+    const avgSalaryRes = await db.query(
+      "SELECT COALESCE(AVG(salary), 0)::numeric AS avg_salary FROM employees WHERE is_active = true"
     );
 
-    res.json({
-      totalEmployees: totalEmployees.rows[0].count,
-      totalSalary: totalSalary.rows[0].total,
-      averageSalary: avgSalary.rows[0].avg,
+    return res.json({
+      totalEmployees: totalEmployeesRes.rows[0].total,
+      totalSalary: totalSalaryRes.rows[0].total_salary,
+      averageSalary: avgSalaryRes.rows[0].avg_salary,
     });
   } catch (err) {
     console.log(err);
-    res.status(500).json({ error: "failed to load summary" });
+    return res.status(500).json({ error: "failed to load summary" });
   }
 };
 
 exports.getSalaryByDepartment = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT department,
-             COUNT(*)::int as employees,
-             SUM(salary)::numeric as total_salary,
-             AVG(salary)::numeric as avg_salary
+      SELECT
+        department,
+        COUNT(*)::int AS employees,
+        COALESCE(SUM(salary), 0)::numeric AS total_salary,
+        COALESCE(AVG(salary), 0)::numeric AS avg_salary
       FROM employees
-      WHERE active = true
+      WHERE is_active = true
       GROUP BY department
       ORDER BY total_salary DESC
     `);
 
-    res.json(result.rows);
+    return res.json(result.rows);
   } catch (err) {
     console.log(err);
-    res.status(500).json({ error: "failed department report" });
+    return res.status(500).json({ error: "failed department report" });
   }
 };
 
 exports.getHighestPaid = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT id, first_name, last_name, department, salary
+      SELECT id, first_name, last_name, department, position, salary
       FROM employees
-      WHERE active = true
+      WHERE is_active = true
       ORDER BY salary DESC
       LIMIT 5
     `);
 
-    res.json(result.rows);
+    return res.json(result.rows);
   } catch (err) {
     console.log(err);
-    res.status(500).json({ error: "failed highest paid report" });
+    return res.status(500).json({ error: "failed highest paid report" });
   }
 };
