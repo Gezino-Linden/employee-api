@@ -1,5 +1,6 @@
 const db = require("../db");
 
+// ================= SUMMARY REPORT =================
 exports.getSummary = async (req, res) => {
   try {
     const totalEmployeesRes = await db.query(
@@ -7,11 +8,11 @@ exports.getSummary = async (req, res) => {
     );
 
     const totalSalaryRes = await db.query(
-      "SELECT COALESCE(SUM(salary), 0)::numeric AS total_salary FROM employees WHERE is_active = true"
+      "SELECT COALESCE(SUM(salary),0)::numeric AS total_salary FROM employees WHERE is_active = true"
     );
 
     const avgSalaryRes = await db.query(
-      "SELECT COALESCE(AVG(salary), 0)::numeric AS avg_salary FROM employees WHERE is_active = true"
+      "SELECT COALESCE(AVG(salary),0)::numeric AS avg_salary FROM employees WHERE is_active = true"
     );
 
     return res.json({
@@ -20,19 +21,20 @@ exports.getSummary = async (req, res) => {
       averageSalary: avgSalaryRes.rows[0].avg_salary,
     });
   } catch (err) {
-    console.log(err);
-    return res.status(500).json({ error: "failed to load summary" });
+    console.log("REPORT SUMMARY ERROR:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
 
+// ================= SALARY BY DEPARTMENT =================
 exports.getSalaryByDepartment = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT
+      SELECT 
         department,
         COUNT(*)::int AS employees,
-        COALESCE(SUM(salary), 0)::numeric AS total_salary,
-        COALESCE(AVG(salary), 0)::numeric AS avg_salary
+        COALESCE(SUM(salary),0)::numeric AS total_salary,
+        COALESCE(AVG(salary),0)::numeric AS avg_salary
       FROM employees
       WHERE is_active = true
       GROUP BY department
@@ -41,11 +43,12 @@ exports.getSalaryByDepartment = async (req, res) => {
 
     return res.json(result.rows);
   } catch (err) {
-    console.log(err);
-    return res.status(500).json({ error: "failed department report" });
+    console.log("DEPARTMENT REPORT ERROR:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
 
+// ================= HIGHEST PAID =================
 exports.getHighestPaid = async (req, res) => {
   try {
     const result = await db.query(`
@@ -58,7 +61,7 @@ exports.getHighestPaid = async (req, res) => {
 
     return res.json(result.rows);
   } catch (err) {
-    console.log(err);
-    return res.status(500).json({ error: "failed highest paid report" });
+    console.log("HIGHEST PAID ERROR:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
