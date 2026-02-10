@@ -18,11 +18,12 @@ router.get(
 
 // get employee by id
 router.get(
-  "/:id",
+  "/",
   requireAuth,
   requireRole(["admin", "manager"]),
-  employeesController.getEmployeeById
+  employeesController.getEmployees
 );
+
 
 //
 // 🔴 ADMIN ONLY (write actions)
