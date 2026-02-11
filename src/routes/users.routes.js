@@ -1,16 +1,22 @@
 const express = require("express");
+
 const {
   getUsers,
   getUserById,
   createUser,
   updateUser,
   deleteUser,
+  updateUserRole, // ✅ add this
 } = require("../controllers/users.controller");
 
 const { requireAuth, requireRole } = require("../middleware");
 
 const router = express.Router();
 
+// ✅ admin can change user role
+router.patch("/:id/role", requireAuth, requireRole("admin"), updateUserRole);
+
+// users CRUD
 router.get("/", requireAuth, getUsers);
 router.get("/:id", requireAuth, getUserById);
 router.post("/", requireAuth, createUser);

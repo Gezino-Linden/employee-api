@@ -87,34 +87,45 @@ exports.login = async (req, res) => {
 
   try {
     const result = await db.query(
-      "SELECT id, name, email, password, role FROM users WHERE email = $1",
+      "SELECT id, name, email, password, role, company_id FROM users WHERE email = $1",
       [email.trim().toLowerCase()]
     );
 
-
     const user = result.rows[0];
-    if (!user || !user.password)
+    if (!user || !user.password) {
       return res.status(401).json({ error: "invalid credentials" });
+    }
 
     const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return res.status(401).json({ error: "invalid credentials" });
+    if (!valid) {
+      return res.status(401).json({ error: "invalid credentials" });
+    }
 
     const token = jwt.sign(
       {
         id: user.id,
         email: user.email,
         role: user.role,
-        company_id: user.company_id, 
+        company_id: user.company_id,
       },
-      JWT_SECRET,
+      process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
-
-
-    res.json({ token });
+    // optional: return user info too (handy for frontend)
+    return res.json({
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        company_id: user.company_id,
+      },
+    });
   } catch (err) {
-    console.log(err);
-    res.status(500).json({ error: "login failed" });
+    console.error(err);
+    return res.status(500).json({ error: "database error" });
   }
 };
+

@@ -187,3 +187,41 @@ exports.deleteUser = async (req, res) => {
     res.status(500).json({ error: "delete failed" });
   }
 };
+
+exports.updateUserRole = async (req, res) => {
+  const id = Number(req.params.id);
+  const { role } = req.body;
+
+  const allowedRoles = ["user", "manager", "admin"];
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: "invalid id" });
+  }
+
+  if (!role || !allowedRoles.includes(role)) {
+    return res
+      .status(400)
+      .json({ error: "role must be user, manager, or admin" });
+  }
+
+  // prevent self-demotion lockouts (optional but recommended)
+  if (req.user.id === id && role !== "admin") {
+    return res.status(400).json({ error: "cannot remove your own admin role" });
+  }
+
+  try {
+    const result = await db.query(
+      "UPDATE users SET role = $1 WHERE id = $2 RETURNING id, name, email, role",
+      [role, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "user not found" });
+    }
+
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.log(err);
+    return res.status(500).json({ error: "update role failed" });
+  }
+};
