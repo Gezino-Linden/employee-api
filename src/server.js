@@ -1,5 +1,6 @@
 // src/server.js
 const express = require("express");
+
 const helmet = require("helmet");
 const swaggerUi = require("swagger-ui-express");
 
@@ -35,6 +36,7 @@ if (process.env.NODE_ENV !== "production") {
 const app = express();
 
 // Middlewares
+app.set("trust proxy", 1); // required for Render / proxies
 app.use(express.json());
 app.use(helmet());
 app.use(apiLimiter);
