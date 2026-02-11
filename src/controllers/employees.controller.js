@@ -1,334 +1,268 @@
 const db = require("../db");
-const asyncHandler = require("../utils/asyncHandler");
 
-// GET employees (pagination + search)
-exports.getEmployees = asyncHandler(async (req, res) => {
-  const page = Math.max(parseInt(req.query.page || "1", 10), 1);
-  const limit = Math.min(
-    Math.max(parseInt(req.query.limit || "10", 10), 1),
-    50
-  );
+function toInt(v, fallback) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+exports.getEmployees = async (req, res) => {
+  const companyId = req.user.company_id;
+
+  const page = Math.max(toInt(req.query.page, 1), 1);
+  const limit = Math.min(Math.max(toInt(req.query.limit, 10), 1), 50);
   const offset = (page - 1) * limit;
 
+  const search = (req.query.search || "").trim();
   const department = (req.query.department || "").trim();
   const position = (req.query.position || "").trim();
-  const search = (req.query.search || "").trim();
 
-  // ✅ active filter
-  // default = true (hide soft-deleted)
-  const activeParam = (req.query.active || "true").toString().toLowerCase();
-  const showAll = activeParam === "all";
-  const isActive = activeParam === "false" ? false : true;
-
-  const where = [];
-  const values = [];
-  let i = 1;
-
-  if (!showAll) {
-    values.push(isActive);
-    where.push(`is_active = $${i++}`);
+  // active=true/false filter
+  let active = req.query.active;
+  if (typeof active === "string") {
+    active = active.toLowerCase();
+    if (active === "true") active = true;
+    else if (active === "false") active = false;
+    else active = undefined;
   }
 
-  if (department) {
-    values.push(department);
-    where.push(`department ILIKE $${i++}`);
-  }
-
-  if (position) {
-    values.push(position);
-    where.push(`position ILIKE $${i++}`);
-  }
+  const where = [`company_id = $1`];
+  const params = [companyId];
+  let i = 2;
 
   if (search) {
-    values.push(`%${search}%`);
     where.push(
       `(first_name ILIKE $${i} OR last_name ILIKE $${i} OR email ILIKE $${i} OR department ILIKE $${i} OR position ILIKE $${i})`
     );
+    params.push(`%${search}%`);
+    i++;
+  }
+  if (department) {
+    where.push(`department = $${i}`);
+    params.push(department);
+    i++;
+  }
+  if (position) {
+    where.push(`position = $${i}`);
+    params.push(position);
+    i++;
+  }
+  if (typeof active === "boolean") {
+    where.push(`is_active = $${i}`);
+    params.push(active);
     i++;
   }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-  const countResult = await db.query(
+  const countRes = await db.query(
     `SELECT COUNT(*)::int AS total FROM employees ${whereSql}`,
-    values
+    params
   );
-  const total = countResult.rows[0].total;
+  const total = countRes.rows[0].total;
 
-  values.push(limit, offset);
+  params.push(limit, offset);
 
-  const listResult = await db.query(
-    `SELECT id, first_name, last_name, email, department, position, salary, is_active, created_at
+  const listRes = await db.query(
+    `SELECT id, first_name, last_name, email, department, position,
+            ROUND(salary, 2) AS salary, is_active, created_at, company_id
      FROM employees
      ${whereSql}
      ORDER BY id DESC
-     LIMIT $${i} OFFSET $${i + 1}`,
-    values
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
   );
 
   return res.json({
     page,
     limit,
     total,
-    totalPages: total === 0 ? 0 : Math.ceil(total / limit),
-    data: listResult.rows,
+    totalPages: Math.ceil(total / limit),
+    data: listRes.rows.map((r) => ({
+      ...r,
+      salary: Number(r.salary),
+    })),
   });
-});
+};
 
-
-
-// GET one employee
-exports.getEmployeeById = asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id))
-    return res.status(400).json({ error: "invalid id" });
+exports.getEmployeeById = async (req, res) => {
+  const companyId = req.user.company_id;
+  const id = toInt(req.params.id, 0);
 
   const result = await db.query(
-    `SELECT id, first_name, last_name, email, department, position, salary, created_at
-     FROM employees WHERE id = $1`,
-    [id]
+    `SELECT id, first_name, last_name, email, department, position,
+            ROUND(salary, 2) AS salary, is_active, created_at, company_id
+     FROM employees
+     WHERE id = $1 AND company_id = $2`,
+    [id, companyId]
   );
 
-  if (result.rows.length === 0)
+  if (!result.rows.length) {
     return res.status(404).json({ error: "employee not found" });
-  res.json(result.rows[0]);
-});
+  }
 
-// CREATE employee
-exports.createEmployee = asyncHandler(async (req, res) => {
+  const emp = result.rows[0];
+  emp.salary = Number(emp.salary);
+  return res.json(emp);
+};
+
+exports.createEmployee = async (req, res) => {
+  const companyId = req.user.company_id;
   const { first_name, last_name, email, department, position, salary } =
     req.body;
 
-  if (
-    !first_name ||
-    typeof first_name !== "string" ||
-    first_name.trim().length < 2
-  ) {
-    return res
-      .status(400)
-      .json({ error: "first_name must be at least 2 characters" });
-  }
-  if (
-    !last_name ||
-    typeof last_name !== "string" ||
-    last_name.trim().length < 2
-  ) {
-    return res
-      .status(400)
-      .json({ error: "last_name must be at least 2 characters" });
-  }
-  if (!email || typeof email !== "string" || !email.includes("@")) {
-    return res.status(400).json({ error: "valid email required" });
-  }
-  if (
-    !department ||
-    typeof department !== "string" ||
-    department.trim().length < 2
-  ) {
-    return res.status(400).json({ error: "department required" });
-  }
-  if (!position || typeof position !== "string" || position.trim().length < 2) {
-    return res.status(400).json({ error: "position required" });
-  }
-
-  const salaryNumber = salary === undefined ? 0 : Number(salary);
-  if (Number.isNaN(salaryNumber) || salaryNumber < 0) {
-    return res.status(400).json({ error: "salary must be a positive number" });
+  if (!first_name || !last_name || !email || !department || !position) {
+    return res.status(400).json({ error: "missing required fields" });
   }
 
   const result = await db.query(
-    `INSERT INTO employees (first_name, last_name, email, department, position, salary)
-     VALUES ($1,$2,$3,$4,$5,$6)
-     RETURNING id, first_name, last_name, email, department, position, salary, created_at`,
+    `INSERT INTO employees
+      (first_name, last_name, email, department, position, salary, company_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING id, first_name, last_name, email, department, position,
+               ROUND(salary, 2) AS salary, is_active, created_at, company_id`,
     [
-      first_name.trim(),
-      last_name.trim(),
-      email.trim().toLowerCase(),
-      department.trim(),
-      position.trim(),
-      salaryNumber,
+      String(first_name).trim(),
+      String(last_name).trim(),
+      String(email).trim().toLowerCase(),
+      String(department).trim(),
+      String(position).trim(),
+      salary ?? 0,
+      companyId,
     ]
   );
 
-  res.status(201).json(result.rows[0]);
-});
+  const emp = result.rows[0];
+  emp.salary = Number(emp.salary);
+  return res.status(201).json(emp);
+};
 
-// UPDATE employee
-exports.updateEmployee = asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id))
-    return res.status(400).json({ error: "invalid id" });
-
-  const { first_name, last_name, email, department, position, salary } =
-    req.body;
-
-  const fields = [];
-  const values = [];
-  let idx = 1;
-
-  if (first_name !== undefined) {
-    if (typeof first_name !== "string" || first_name.trim().length < 2) {
-      return res
-        .status(400)
-        .json({ error: "first_name must be at least 2 characters" });
-    }
-    fields.push(`first_name = $${idx++}`);
-    values.push(first_name.trim());
-  }
-
-  if (last_name !== undefined) {
-    if (typeof last_name !== "string" || last_name.trim().length < 2) {
-      return res
-        .status(400)
-        .json({ error: "last_name must be at least 2 characters" });
-    }
-    fields.push(`last_name = $${idx++}`);
-    values.push(last_name.trim());
-  }
-
-  if (email !== undefined) {
-    if (typeof email !== "string" || !email.includes("@")) {
-      return res.status(400).json({ error: "valid email required" });
-    }
-    fields.push(`email = $${idx++}`);
-    values.push(email.trim().toLowerCase());
-  }
-
-  if (department !== undefined) {
-    if (typeof department !== "string" || department.trim().length < 2) {
-      return res.status(400).json({ error: "department required" });
-    }
-    fields.push(`department = $${idx++}`);
-    values.push(department.trim());
-  }
-
-  if (position !== undefined) {
-    if (typeof position !== "string" || position.trim().length < 2) {
-      return res.status(400).json({ error: "position required" });
-    }
-    fields.push(`position = $${idx++}`);
-    values.push(position.trim());
-  }
-
-  if (salary !== undefined) {
-    const salaryNumber = Number(salary);
-    if (Number.isNaN(salaryNumber) || salaryNumber < 0) {
-      return res
-        .status(400)
-        .json({ error: "salary must be a positive number" });
-    }
-    fields.push(`salary = $${idx++}`);
-    values.push(salaryNumber);
-  }
-
-  if (fields.length === 0)
-    return res.status(400).json({ error: "nothing to update" });
-
-  values.push(id);
-
-  const result = await db.query(
-    `UPDATE employees SET ${fields.join(", ")}
-     WHERE id = $${idx}
-     RETURNING id, first_name, last_name, email, department, position, salary, created_at`,
-    values
-  );
-
-  if (result.rows.length === 0)
-    return res.status(404).json({ error: "employee not found" });
-  res.json(result.rows[0]);
-});
-
-// DELETE employee
-exports.deleteEmployee = async (req, res) => {
-  const { id } = req.params;
+exports.updateEmployee = async (req, res) => {
+  const companyId = req.user.company_id;
+  const id = toInt(req.params.id, 0);
+  const { first_name, last_name, email, department, position } = req.body;
 
   const result = await db.query(
     `UPDATE employees
-     SET is_active = false, deleted_at = NOW()
-     WHERE id = $1 AND is_active = true
-     RETURNING id`,
-    [id]
+     SET first_name = COALESCE($1, first_name),
+         last_name  = COALESCE($2, last_name),
+         email      = COALESCE($3, email),
+         department = COALESCE($4, department),
+         position   = COALESCE($5, position)
+     WHERE id = $6 AND company_id = $7
+     RETURNING id, first_name, last_name, email, department, position,
+               ROUND(salary, 2) AS salary, is_active, created_at, company_id`,
+    [
+      first_name ?? null,
+      last_name ?? null,
+      email ? String(email).trim().toLowerCase() : null,
+      department ?? null,
+      position ?? null,
+      id,
+      companyId,
+    ]
   );
 
-  if (result.rowCount === 0) {
-    return res
-      .status(404)
-      .json({ error: "employee not found or already deleted" });
+  if (!result.rows.length) {
+    return res.status(404).json({ error: "employee not found" });
+  }
+
+  const emp = result.rows[0];
+  emp.salary = Number(emp.salary);
+  return res.json(emp);
+};
+
+exports.deleteEmployee = async (req, res) => {
+  const companyId = req.user.company_id;
+  const id = toInt(req.params.id, 0);
+
+  const result = await db.query(
+    `UPDATE employees
+     SET is_active = false
+     WHERE id = $1 AND company_id = $2
+     RETURNING id`,
+    [id, companyId]
+  );
+
+  if (!result.rows.length) {
+    return res.status(404).json({ error: "employee not found" });
   }
 
   return res.status(204).send();
 };
 
-
-
-
-exports.updateEmployeeSalary = async (req, res) => {
-  const employeeId = Number(req.params.id);
-  const { salary } = req.body;
-
-  if (!Number.isInteger(employeeId)) {
-    return res.status(400).json({ error: "invalid employee id" });
-  }
-
-  const newSalary = Number(salary);
-  if (!Number.isFinite(newSalary) || newSalary <= 0) {
-    return res.status(400).json({ error: "salary must be a positive number" });
-  }
-
-  try {
-    await db.query("BEGIN");
-
-    // 1) get current salary
-    const current = await db.query(
-      "SELECT id, salary FROM employees WHERE id = $1",
-      [employeeId]
-    );
-
-    if (current.rows.length === 0) {
-      await db.query("ROLLBACK");
-      return res.status(404).json({ error: "employee not found" });
-    }
-
-    const oldSalary = Number(current.rows[0].salary);
-
-    // 2) update salary
-    const updated = await db.query(
-      "UPDATE employees SET salary = $1 WHERE id = $2 RETURNING id, first_name, last_name, email, department, position, salary, created_at",
-      [newSalary, employeeId]
-    );
-
-    // 3) insert audit log
-    await db.query(
-      `INSERT INTO salary_history (employee_id, old_salary, new_salary, changed_by_user_id)
-       VALUES ($1, $2, $3, $4)`,
-      [employeeId, oldSalary, newSalary, req.user.id]
-    );
-
-    await db.query("COMMIT");
-    return res.json(updated.rows[0]);
-  } catch (err) {
-    await db.query("ROLLBACK");
-    console.log(err);
-    return res.status(500).json({ error: "salary update failed" });
-  }
-};
-
 exports.restoreEmployee = async (req, res) => {
-  const { id } = req.params;
+  const companyId = req.user.company_id;
+  const id = toInt(req.params.id, 0);
 
   const result = await db.query(
     `UPDATE employees
-     SET is_active = true, deleted_at = NULL
-     WHERE id = $1 AND is_active = false
-     RETURNING id, first_name, last_name, email, department, position, salary, created_at`,
-    [id]
+     SET is_active = true
+     WHERE id = $1 AND company_id = $2
+     RETURNING id, first_name, last_name, email, department, position,
+               ROUND(salary, 2) AS salary, is_active, created_at, company_id`,
+    [id, companyId]
   );
 
-  if (result.rowCount === 0) {
-    return res.status(404).json({ error: "employee not found or not deleted" });
+  if (!result.rows.length) {
+    return res.status(404).json({ error: "employee not found" });
   }
 
-  return res.json(result.rows[0]);
+  const emp = result.rows[0];
+  emp.salary = Number(emp.salary);
+  return res.json(emp);
 };
 
+exports.updateEmployeeSalary = async (req, res) => {
+  const companyId = req.user.company_id;
+  const id = toInt(req.params.id, 0);
+  const { salary } = req.body;
 
+  if (salary === undefined || salary === null || Number.isNaN(Number(salary))) {
+    return res.status(400).json({ error: "salary must be a number" });
+  }
+
+  // Ensure employee is in SAME COMPANY, get old salary first
+  const empRes = await db.query(
+    `SELECT id, salary
+     FROM employees
+     WHERE id = $1 AND company_id = $2`,
+    [id, companyId]
+  );
+
+  if (!empRes.rows.length) {
+    return res.status(404).json({ error: "employee not found" });
+  }
+
+  const oldSalary = empRes.rows[0].salary;
+
+  await db.query("BEGIN");
+
+  try {
+    const updateRes = await db.query(
+      `UPDATE employees
+       SET salary = $1
+       WHERE id = $2 AND company_id = $3
+       RETURNING id, first_name, last_name, email, department, position,
+                 ROUND(salary, 2) AS salary, is_active, created_at, company_id`,
+      [salary, id, companyId]
+    );
+
+    // audit log (company scoped)
+    await db.query(
+      `INSERT INTO employee_salary_audit
+        (employee_id, old_salary, new_salary, changed_by_user_id, company_id)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [id, oldSalary, salary, req.user.id, companyId]
+    );
+
+    await db.query("COMMIT");
+
+    const emp = updateRes.rows[0];
+    emp.salary = Number(emp.salary);
+    return res.json(emp);
+  } catch (err) {
+    await db.query("ROLLBACK");
+    console.error(err);
+    return res.status(500).json({ error: "database error" });
+  }
+};

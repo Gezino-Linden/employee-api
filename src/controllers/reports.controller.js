@@ -1,98 +1,88 @@
 const db = require("../db");
 
-// =========================
-// 📊 SUMMARY REPORT
-// =========================
 exports.getSummary = async (req, res) => {
+  const companyId = req.user.company_id;
+
   try {
-    const totalEmployeesRes = await db.query(
-      "SELECT COUNT(*)::int AS total FROM employees WHERE is_active = true"
-    );
+    const q = `
+      SELECT
+        COUNT(*)::int AS total_employees,
+        COALESCE(ROUND(SUM(salary), 2), 0) AS total_salary,
+        COALESCE(ROUND(AVG(salary), 2), 0) AS avg_salary
+      FROM employees
+      WHERE company_id = $1 AND is_active = true
+    `;
 
-    const totalSalaryRes = await db.query(
-      `SELECT COALESCE(ROUND(SUM(salary), 2), 0) AS total_salary
-       FROM employees
-       WHERE is_active = true`
-    );
-
-    const avgSalaryRes = await db.query(
-      `SELECT COALESCE(ROUND(AVG(salary), 2), 0) AS avg_salary
-       FROM employees
-       WHERE is_active = true`
-    );
+    const r = await db.query(q, [companyId]);
+    const row = r.rows[0];
 
     return res.json({
-      version: "0ccd411-rounding",
-      totalEmployees: totalEmployeesRes.rows[0].total,
-      totalSalary: Number(totalSalaryRes.rows[0].total_salary),
-      averageSalary: Number(avgSalaryRes.rows[0].avg_salary),
+      totalEmployees: row.total_employees,
+      totalSalary: Number(row.total_salary),
+      averageSalary: Number(row.avg_salary),
     });
-
   } catch (err) {
-    console.log("REPORT SUMMARY ERROR:", err);
-    return res.status(500).json({ error: err.message });
+    console.error(err);
+    return res.status(500).json({ error: "database error" });
   }
 };
 
-// =========================
-// 📊 SALARY BY DEPARTMENT
-// =========================
 exports.getSalaryByDepartment = async (req, res) => {
+  const companyId = req.user.company_id;
+
   try {
-    const result = await db.query(`
-      SELECT 
+    const q = `
+      SELECT
         department,
         COUNT(*)::int AS employees,
         COALESCE(ROUND(SUM(salary), 2), 0) AS total_salary,
         COALESCE(ROUND(AVG(salary), 2), 0) AS avg_salary
       FROM employees
-      WHERE is_active = true
+      WHERE company_id = $1 AND is_active = true
       GROUP BY department
       ORDER BY total_salary DESC
-    `);
+    `;
 
-    // convert numeric strings → numbers
-    const cleaned = result.rows.map((r) => ({
-      department: r.department,
-      employees: r.employees,
-      total_salary: Number(r.total_salary),
-      avg_salary: Number(r.avg_salary),
-    }));
+    const r = await db.query(q, [companyId]);
 
-    return res.json(cleaned);
+    return res.json(
+      r.rows.map((x) => ({
+        department: x.department,
+        employees: x.employees,
+        totalSalary: Number(x.total_salary),
+        averageSalary: Number(x.avg_salary),
+      }))
+    );
   } catch (err) {
-    console.log("DEPARTMENT REPORT ERROR:", err);
-    return res.status(500).json({ error: err.message });
+    console.error(err);
+    return res.status(500).json({ error: "database error" });
   }
 };
 
-// =========================
-// 💰 TOP 5 HIGHEST PAID
-// =========================
 exports.getHighestPaid = async (req, res) => {
+  const companyId = req.user.company_id;
+
   try {
-    const result = await db.query(`
-      SELECT 
-        id,
-        first_name,
-        last_name,
-        department,
-        position,
-        ROUND(salary, 2) AS salary
+    const q = `
+      SELECT
+        id, first_name, last_name, email, department, position,
+        ROUND(salary, 2) AS salary, created_at
       FROM employees
-      WHERE is_active = true
+      WHERE company_id = $1 AND is_active = true
       ORDER BY salary DESC
-      LIMIT 5
-    `);
+      LIMIT 10
+    `;
 
-    const cleaned = result.rows.map((r) => ({
-      ...r,
-      salary: Number(r.salary),
-    }));
+    const r = await db.query(q, [companyId]);
 
-    return res.json(cleaned);
+    return res.json(
+      r.rows.map((e) => ({
+        ...e,
+        salary: Number(e.salary),
+      }))
+    );
   } catch (err) {
-    console.log("HIGHEST PAID ERROR:", err);
-    return res.status(500).json({ error: err.message });
+    console.error(err);
+    return res.status(500).json({ error: "database error" });
   }
 };
