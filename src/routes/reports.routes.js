@@ -2,27 +2,27 @@ const express = require("express");
 const router = express.Router();
 
 const reportsController = require("../controllers/reports.controller");
-const { requireAuth, requireRole } = require("../middleware");
+const { requireAuth, requireRoles } = require("../middleware");
 
-// ✅ allow ADMIN + MANAGER to view reports
+// admin + manager can view reports
 router.get(
   "/summary",
   requireAuth,
-  requireRole(["admin", "manager"]),
+  requireRoles("admin", "manager"),
   reportsController.getSummary
 );
 
 router.get(
   "/by-department",
   requireAuth,
-  requireRole(["admin", "manager"]),
+  requireRoles("admin", "manager"),
   reportsController.getSalaryByDepartment
 );
 
 router.get(
   "/highest-paid",
   requireAuth,
-  requireRole(["admin", "manager"]),
+  requireRoles("admin", "manager"),
   reportsController.getHighestPaid
 );
 
