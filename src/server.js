@@ -1,4 +1,16 @@
+// src/server.js
 const express = require("express");
+const helmet = require("helmet");
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require("./swagger");
+
+
+
+const {
+  apiLimiter,
+  authLimiter,
+  loginLimiter, // (optional) use inside auth routes if you want
+} = require("./security/rateLimiters");
 
 // Load .env only when running locally (NOT on Render/production)
 if (process.env.NODE_ENV !== "production") {
@@ -9,18 +21,34 @@ const db = require("./db");
 const authRoutes = require("./routes/auth.routes");
 const usersRoutes = require("./routes/users.routes");
 const employeesRoutes = require("./routes/employees.routes");
+const reportsRoutes = require("./routes/reports.routes");
 const { requireAuth } = require("./middleware");
 const errorHandler = require("./errorHandler");
-const reportsRoutes = require("./routes/reports.routes");
-
 
 const app = express();
-app.use(express.json());
 
+// ----- Global middleware -----
+app.use(express.json());
+app.use(helmet());
+app.use(apiLimiter);
+app.get("/version", (req, res) => {
+  res.json({
+    running: "src/server.js",
+    commitHint: "add-version-route",
+    time: new Date().toISOString(),
+  });
+});
+
+
+// ----- Public routes -----
 app.get("/", (req, res) => res.send("My first API is running 🚀"));
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
-// Protected route: return the currently logged-in user
+// Swagger UI (public)
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+// If you prefer /docs instead, change /api-docs to /docs
+
+// ----- Authenticated routes -----
 app.get("/me", requireAuth, async (req, res) => {
   try {
     const result = await db.query(
@@ -39,13 +67,15 @@ app.get("/me", requireAuth, async (req, res) => {
   }
 });
 
-// Routes
-app.use("/auth", authRoutes);
+// ----- Feature routes -----
+// Apply auth rate limiter ONLY once (remove duplicate mounting)
+app.use("/auth", authLimiter, authRoutes);
+// Users / Employees / Reports have their own auth+role checks inside routes
 app.use("/users", usersRoutes);
 app.use("/employees", employeesRoutes);
 app.use("/reports", reportsRoutes);
 
-// Error handler LAST
+// ----- Error handler LAST -----
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 4000;
