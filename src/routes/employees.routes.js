@@ -2,71 +2,67 @@ const express = require("express");
 const router = express.Router();
 
 const employeesController = require("../controllers/employees.controller");
-const { requireAuth, requireRole } = require("../middleware");
+const { requireAuth, requireRoles } = require("../middleware");
 
-//
-// 🔵 READ ONLY (admin + manager)
-//
+/**
+ * Employees permissions:
+ * - admin: full CRUD + salary updates + restore
+ * - manager: read-only (list + view)
+ */
 
-// get all employees
+// READ (admin + manager)
 router.get(
   "/",
   requireAuth,
-  requireRole(["admin", "manager"]),
+  requireRoles("admin", "manager"),
   employeesController.getEmployees
 );
 
-// get employee by id
 router.get(
-  "/",
+  "/:id",
   requireAuth,
-  requireRole(["admin", "manager"]),
-  employeesController.getEmployees
+  requireRoles("admin", "manager"),
+  employeesController.getEmployeeById
 );
 
-
-//
-// 🔴 ADMIN ONLY (write actions)
-//
-
-// create employee
+// CREATE (admin only)
 router.post(
   "/",
   requireAuth,
-  requireRole("admin"),
+  requireRoles("admin"),
   employeesController.createEmployee
 );
 
-// update employee
+// UPDATE (admin only)
 router.put(
   "/:id",
   requireAuth,
-  requireRole("admin"),
+  requireRoles("admin"),
   employeesController.updateEmployee
 );
 
-// delete (soft delete)
+// SOFT DELETE (admin only)
 router.delete(
   "/:id",
   requireAuth,
-  requireRole("admin"),
+  requireRoles("admin"),
   employeesController.deleteEmployee
 );
 
-// restore employee
-router.patch(
-  "/:id/restore",
-  requireAuth,
-  requireRole("admin"),
-  employeesController.restoreEmployee
-);
-
-// salary update with audit log
+// SALARY UPDATE + AUDIT LOG (admin only)
 router.patch(
   "/:id/salary",
   requireAuth,
-  requireRole("admin"),
+  requireRoles("admin"),
   employeesController.updateEmployeeSalary
+);
+
+// RESTORE (admin only)
+router.patch(
+  "/:id/restore",
+  requireAuth,
+  requireRoles("admin"),
+  employeesController.restoreEmployee
 );
 
 module.exports = router;
