@@ -6,8 +6,8 @@ const { requireAuth, requireRoles } = require("../middleware");
 
 /**
  * Employees permissions:
- * - admin: full CRUD + salary updates + restore
- * - manager: read-only (list + view)
+ * - admin: full CRUD + salary updates + restore + delete
+ * - manager: read-only (list + view) + exports
  */
 
 // READ (admin + manager)
@@ -16,6 +16,21 @@ router.get(
   requireAuth,
   requireRoles("admin", "manager"),
   employeesController.getEmployees
+);
+
+// EXPORTS (admin + manager) ✅ MUST be before "/:id"
+router.get(
+  "/export.csv",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  employeesController.exportEmployeesCsv
+);
+
+router.get(
+  "/export.xlsx",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  employeesController.exportEmployeesXlsx
 );
 
 router.get(
@@ -49,20 +64,20 @@ router.delete(
   employeesController.deleteEmployee
 );
 
-// SALARY UPDATE + AUDIT LOG (admin only)
-router.patch(
-  "/:id/salary",
-  requireAuth,
-  requireRoles("admin"),
-  employeesController.updateEmployeeSalary
-);
-
 // RESTORE (admin only)
 router.patch(
   "/:id/restore",
   requireAuth,
   requireRoles("admin"),
   employeesController.restoreEmployee
+);
+
+// SALARY UPDATE + AUDIT LOG (admin only)
+router.patch(
+  "/:id/salary",
+  requireAuth,
+  requireRoles("admin"),
+  employeesController.updateEmployeeSalary
 );
 
 module.exports = router;
