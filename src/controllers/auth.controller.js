@@ -129,3 +129,90 @@ exports.login = async (req, res) => {
     return res.status(500).json({ error: "database error" });
   }
 };
+
+const crypto = require("crypto");
+
+function sha256(input) {
+  return crypto.createHash("sha256").update(input).digest("hex");
+}
+
+exports.acceptInvite = async (req, res) => {
+  const { token, name, password } = req.body;
+
+  if (!token || typeof token !== "string" || token.length < 20) {
+    return res.status(400).json({ error: "valid token required" });
+  }
+  if (!name || typeof name !== "string" || name.trim().length < 2) {
+    return res
+      .status(400)
+      .json({ error: "name must be at least 2 characters" });
+  }
+  if (!password || typeof password !== "string" || password.length < 6) {
+    return res
+      .status(400)
+      .json({ error: "password must be at least 6 characters" });
+  }
+
+  const tokenHash = sha256(token);
+
+  try {
+    await db.query("BEGIN");
+
+    const inviteRes = await db.query(
+      `SELECT id, company_id, email, role, expires_at, used_at
+       FROM user_invites
+       WHERE token_hash = $1`,
+      [tokenHash]
+    );
+
+    if (inviteRes.rows.length === 0) {
+      await db.query("ROLLBACK");
+      return res.status(400).json({ error: "invalid invite token" });
+    }
+
+    const invite = inviteRes.rows[0];
+
+    if (invite.used_at) {
+      await db.query("ROLLBACK");
+      return res.status(400).json({ error: "invite already used" });
+    }
+
+    if (new Date(invite.expires_at).getTime() < Date.now()) {
+      await db.query("ROLLBACK");
+      return res.status(400).json({ error: "invite expired" });
+    }
+
+    // Ensure user doesn't already exist in this company
+    const existing = await db.query(
+      `SELECT id FROM users WHERE email = $1 AND company_id = $2`,
+      [invite.email, invite.company_id]
+    );
+
+    if (existing.rows.length > 0) {
+      await db.query("ROLLBACK");
+      return res
+        .status(409)
+        .json({ error: "user already exists in this company" });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const userRes = await db.query(
+      `INSERT INTO users (name, email, password, role, company_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, name, email, role, company_id`,
+      [name.trim(), invite.email, hashed, invite.role, invite.company_id]
+    );
+
+    await db.query(`UPDATE user_invites SET used_at = now() WHERE id = $1`, [
+      invite.id,
+    ]);
+
+    await db.query("COMMIT");
+    return res.status(201).json(userRes.rows[0]);
+  } catch (err) {
+    await db.query("ROLLBACK");
+    console.error(err);
+    return res.status(500).json({ error: "accept invite failed" });
+  }
+};
