@@ -4,7 +4,7 @@ const router = express.Router();
 const reportsController = require("../controllers/reports.controller");
 const { requireAuth, requireRoles } = require("../middleware");
 
-// admin + manager can view reports
+// VIEW REPORTS (admin + manager)
 router.get(
   "/summary",
   requireAuth,
@@ -24,6 +24,52 @@ router.get(
   requireAuth,
   requireRoles("admin", "manager"),
   reportsController.getHighestPaid
+);
+
+//
+// 🔽 NEW EXPORT ROUTES
+//
+
+router.get(
+  "/summary.csv",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.exportSummaryCsv
+);
+
+router.get(
+  "/summary.xlsx",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.exportSummaryXlsx
+);
+
+router.get(
+  "/by-department.csv",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.exportByDepartmentCsv
+);
+
+router.get(
+  "/by-department.xlsx",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.exportByDepartmentXlsx
+);
+
+router.get(
+  "/highest-paid.csv",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.exportHighestPaidCsv
+);
+
+router.get(
+  "/highest-paid.xlsx",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.exportHighestPaidXlsx
 );
 
 module.exports = router;
