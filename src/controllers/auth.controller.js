@@ -118,9 +118,10 @@ exports.login = async (req, res) => {
         role: user.role,
         company_id: user.company_id,
       },
-      JWT_SECRET,
+      process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
+
 
     return res.json({ token });
   } catch (err) {
