@@ -2,15 +2,19 @@ const express = require("express");
 const router = express.Router();
 
 const companiesController = require("../controllers/companies.controller");
+const invitesController = require("../controllers/invites.controller");
 const { requireAuth, requireRoles } = require("../middleware");
 
 /**
  * Companies:
- * - For now: only admins can create companies.
- * - You can later add "platform admin" if you want only 1 super-admin to create companies.
+ * - Admin can create company
+ * - Admin can invite users to THEIR company
+ * - All logged users can view their company
  */
 
-// Create a new company (admin only)
+//////////////////////////////
+// CREATE COMPANY (admin)
+//////////////////////////////
 router.post(
   "/",
   requireAuth,
@@ -18,12 +22,24 @@ router.post(
   companiesController.createCompany
 );
 
-// Get my company details (admin/manager/user)
+//////////////////////////////
+// GET MY COMPANY
+//////////////////////////////
 router.get(
   "/me",
   requireAuth,
   requireRoles("admin", "manager", "user"),
   companiesController.getMyCompany
+);
+
+//////////////////////////////
+// 🔥 INVITE USER TO COMPANY (admin)
+//////////////////////////////
+router.post(
+  "/invite",
+  requireAuth,
+  requireRoles("admin"),
+  invitesController.createInvite
 );
 
 module.exports = router;
