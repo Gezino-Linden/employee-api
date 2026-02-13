@@ -102,6 +102,9 @@ app.use("/companies", companiesRoutes);
  */
 app.get("/me", requireAuth, async (req, res) => {
   try {
+    // 🚫 Disable caching for authenticated route
+    res.set("Cache-Control", "no-store");
+
     const result = await db.query(
       "SELECT id, name, email, role, company_id FROM users WHERE id = $1",
       [req.user.id]
@@ -117,6 +120,7 @@ app.get("/me", requireAuth, async (req, res) => {
     return res.status(500).json({ error: "database error" });
   }
 });
+
 
 // 404
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
