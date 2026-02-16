@@ -34,7 +34,8 @@ app.set("trust proxy", 1);
 const allowedOrigins = [
   "http://localhost:4200",
   "http://127.0.0.1:4200",
-  // add your deployed frontend later if needed
+  // ADD YOUR DEPLOYED FRONTEND URL HERE when you deploy
+  // "https://your-frontend.vercel.app",
 ];
 
 const corsOptions = {
@@ -58,13 +59,14 @@ app.use(express.json({ limit: "1mb" }));
 app.use(helmet());
 
 /**
- * ✅ IMPORTANT:
- * Your rate limiter might block OPTIONS preflight.
- * So we skip rate limiting for OPTIONS requests.
+ * ✅ Handle OPTIONS preflight requests
+ * FIX: Only respond to OPTIONS, don't interfere with other methods
  */
 app.use((req, res, next) => {
-  if (req.method === "OPTIONS") return res.sendStatus(204);
-  return next();
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
 });
 
 // ✅ Apply global limiter AFTER we handled OPTIONS
@@ -89,18 +91,9 @@ app.get("/version", (req, res) => {
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 /**
- * ✅ Routes
+ * ✅ /me (protected) - MOVED TO /api/me
  */
-app.use("/auth", authLimiter, authRoutes);
-app.use("/users", usersRoutes);
-app.use("/employees", employeesRoutes);
-app.use("/reports", reportsRoutes);
-app.use("/companies", companiesRoutes);
-
-/**
- * ✅ /me (protected)
- */
-app.get("/me", requireAuth, async (req, res) => {
+app.get("/api/me", requireAuth, async (req, res) => {
   try {
     // 🚫 Disable caching for authenticated route
     res.set("Cache-Control", "no-store");
@@ -121,6 +114,15 @@ app.get("/me", requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * ✅ Routes - ALL UNDER /api PREFIX
+ * FIX: Added /api prefix to match frontend expectations
+ */
+app.use("/api/auth", authLimiter, authRoutes);
+app.use("/api/users", usersRoutes);
+app.use("/api/employees", employeesRoutes);
+app.use("/api/reports", reportsRoutes);
+app.use("/api/companies", companiesRoutes);
 
 // 404
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
