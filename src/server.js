@@ -9,6 +9,7 @@ const authRoutes = require("./routes/auth.routes");
 const usersRoutes = require("./routes/users.routes");
 const employeesRoutes = require("./routes/employees.routes");
 const reportsRoutes = require("./routes/reports.routes");
+const leaveRoutes = require("./routes/leave.routes");
 
 const db = require("./db");
 const { requireAuth } = require("./middleware");
@@ -123,6 +124,7 @@ app.use("/api/users", usersRoutes);
 app.use("/api/employees", employeesRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/companies", companiesRoutes);
+app.use("/api/leave", leaveRoutes);
 
 // 404
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
