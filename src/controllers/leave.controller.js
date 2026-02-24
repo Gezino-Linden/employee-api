@@ -37,14 +37,17 @@ exports.getMyBalances = async (req, res) => {
     const companyId = req.user.company_id;
     const year = toInt(req.query.year, new Date().getFullYear());
 
-    // Get employee_id from user_id
+    // Find any employee in the same company (for now, use the first one)
+    // TODO: Create proper user-to-employee linkage
     const empResult = await db.query(
-      `SELECT id FROM employees WHERE company_id = $1 LIMIT 1`,
+      `SELECT id FROM employees WHERE company_id = $1 ORDER BY id LIMIT 1`,
       [companyId]
     );
 
     if (empResult.rows.length === 0) {
-      return res.status(404).json({ error: "Employee record not found" });
+      return res
+        .status(404)
+        .json({ error: "No employee records found for your company" });
     }
 
     const employeeId = empResult.rows[0].id;
@@ -75,9 +78,7 @@ exports.getMyBalances = async (req, res) => {
   }
 };
 
-// =====================================================
-// GET EMPLOYEE LEAVE BALANCES (Admin/Manager)
-// =====================================================
+// Add this after getMyBalances function
 exports.getEmployeeBalances = async (req, res) => {
   try {
     const employeeId = toInt(req.params.employeeId, 0);
@@ -130,16 +131,16 @@ exports.getEmployeeBalances = async (req, res) => {
 exports.getMyRequests = async (req, res) => {
   try {
     const companyId = req.user.company_id;
-    const status = req.query.status; // optional filter
+    const status = req.query.status;
 
     // Get employee_id
     const empResult = await db.query(
-      `SELECT id FROM employees WHERE company_id = $1 LIMIT 1`,
+      `SELECT id FROM employees WHERE company_id = $1 ORDER BY id LIMIT 1`,
       [companyId]
     );
 
     if (empResult.rows.length === 0) {
-      return res.status(404).json({ error: "Employee record not found" });
+      return res.status(404).json({ error: "No employee records found" });
     }
 
     const employeeId = empResult.rows[0].id;
