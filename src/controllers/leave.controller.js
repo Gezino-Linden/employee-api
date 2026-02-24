@@ -78,7 +78,9 @@ exports.getMyBalances = async (req, res) => {
   }
 };
 
-// Add this after getMyBalances function
+// =====================================================
+// GET EMPLOYEE BALANCES (Admin/Manager)
+// =====================================================
 exports.getEmployeeBalances = async (req, res) => {
   try {
     const employeeId = toInt(req.params.employeeId, 0);
@@ -345,6 +347,30 @@ exports.createRequest = async (req, res) => {
       return res
         .status(400)
         .json({ error: "Cannot request leave in the past" });
+    }
+
+    // ✅ CHECK SUFFICIENT BALANCE
+    const balanceCheck = await db.query(
+      `SELECT remaining_days FROM leave_balances 
+       WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3`,
+      [employeeId, leave_type_id, startDate.getFullYear()]
+    );
+
+    if (balanceCheck.rows.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "No leave balance found for this year" });
+    }
+
+    // Calculate approximate days (will be exact after trigger)
+    const requestedDays =
+      Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+    const availableDays = balanceCheck.rows[0].remaining_days;
+
+    if (requestedDays > availableDays) {
+      return res.status(400).json({
+        error: `Insufficient balance. You have ${availableDays} days available but requested ${requestedDays} days.`,
+      });
     }
 
     await db.query("BEGIN");
