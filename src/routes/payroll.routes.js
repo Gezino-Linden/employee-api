@@ -12,6 +12,7 @@ const { requireAuth, requireRoles } = require("../middleware");
 
 // ===== PAYROLL SUMMARY =====
 // Get summary statistics for a payroll period
+// Query params: month (1-12), year (YYYY)
 router.get(
   "/summary",
   requireAuth,
@@ -20,7 +21,8 @@ router.get(
 );
 
 // ===== PAYROLL RECORDS =====
-// Get all payroll records for a period
+// Get all payroll records for a period with pagination
+// Query params: month, year, status (draft|processed|paid), page, per_page
 router.get(
   "/records",
   requireAuth,
@@ -28,7 +30,8 @@ router.get(
   payrollController.getPayrollRecords
 );
 
-// Update a specific payroll record
+// Update a specific payroll record (recalculates totals automatically)
+// Body: allowances, bonuses, overtime, medical_aid, other_deductions, notes
 router.patch(
   "/records/:id",
   requireAuth,
@@ -37,7 +40,8 @@ router.patch(
 );
 
 // ===== PAYROLL PROCESSING =====
-// Initialize payroll for a new period
+// Initialize payroll for a new period (creates draft records for all active employees)
+// Body: month, year
 router.post(
   "/initialize",
   requireAuth,
@@ -45,7 +49,8 @@ router.post(
   payrollController.initializePayrollPeriod
 );
 
-// Process payroll for selected employees
+// Process payroll for selected employees (draft -> processed)
+// Body: employee_ids[], month, year
 router.post(
   "/process",
   requireAuth,
@@ -53,7 +58,8 @@ router.post(
   payrollController.processPayroll
 );
 
-// Mark a payroll record as paid
+// Mark a payroll record as paid (processed -> paid)
+// Body: payment_method, payment_date, payment_reference
 router.patch(
   "/records/:id/pay",
   requireAuth,
@@ -62,11 +68,12 @@ router.patch(
 );
 
 // ===== PAYSLIP GENERATION =====
-// Generate and download payslip
+// Generate and download payslip (employees can view their own, admins can view all)
 router.get("/payslip/:id", requireAuth, payrollController.generatePayslip);
 
 // ===== PAYROLL HISTORY =====
-// Get payroll history (across multiple periods)
+// Get payroll history across multiple periods with pagination
+// Query params: employee_id (optional), limit, page, per_page
 router.get("/history", requireAuth, payrollController.getPayrollHistory);
 
 module.exports = router;
