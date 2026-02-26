@@ -21,15 +21,16 @@ exports.getPayrollSummary = async (req, res) => {
 
     const result = await db.query(
       `SELECT 
-        COUNT(*)::int as total_employees,
-        COALESCE(SUM(gross_pay), 0) as total_gross,
-        COALESCE(SUM(total_deductions), 0) as total_deductions,
-        COALESCE(SUM(net_pay), 0) as total_net,
-        COUNT(CASE WHEN status = 'paid' THEN 1 END)::int as paid_count,
-        COUNT(CASE WHEN status = 'processed' THEN 1 END)::int as processed_count,
-        COUNT(CASE WHEN status = 'draft' THEN 1 END)::int as draft_count
-       FROM payroll_records
-       WHERE company_id = $1 AND month = $2 AND year = $3`,
+    COUNT(*)::int as total_employees,
+    COALESCE(SUM(gross_pay), 0) as total_gross,
+    COALESCE(SUM(total_deductions), 0) as total_deductions,
+    COALESCE(SUM(net_pay), 0) as total_net,
+    COALESCE(SUM(tax), 0) as tax,  // <-- ADD THIS LINE
+    COUNT(CASE WHEN status = 'paid' THEN 1 END)::int as paid_count,
+    COUNT(CASE WHEN status = 'processed' THEN 1 END)::int as processed_count,
+    COUNT(CASE WHEN status = 'draft' THEN 1 END)::int as draft_count
+   FROM payroll_records
+   WHERE company_id = $1 AND month = $2 AND year = $3`,
       [companyId, month, year]
     );
 
@@ -313,13 +314,11 @@ exports.generatePayslip = async (req, res) => {
     // Get payroll record with employee details
     const result = await db.query(
       `SELECT 
-        pr.*,
-        e.first_name, e.last_name, e.email, e.position, e.department,
-        c.name as company_name
-       FROM payroll_records pr
-       JOIN employees e ON pr.employee_id = e.id
-       JOIN companies c ON pr.company_id = c.id
-       WHERE pr.id = $1 AND pr.company_id = $2`,
+    pr.*,
+    e.first_name, e.last_name, e.email, e.position, e.department
+   FROM payroll_records pr
+   JOIN employees e ON pr.employee_id = e.id
+   WHERE pr.id = $1 AND pr.company_id = $2`,
       [recordId, companyId]
     );
 
@@ -332,7 +331,7 @@ exports.generatePayslip = async (req, res) => {
     // Simple text-based payslip (you can upgrade to PDF library later)
     const payslip = `
 ===========================================
-         PAYSLIP - ${record.company_name}
+         PAYSLIP - Company ID: ${record.company_id}
 ===========================================
 Employee: ${record.first_name} ${record.last_name}
 Position: ${record.position}
