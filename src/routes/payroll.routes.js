@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 const payrollController = require("../controllers/payroll.controller");
 const { requireAuth, requireRoles } = require("../middleware");
+const PDFDocument = require("pdfkit");
 
 /**
  * Payroll Management Routes

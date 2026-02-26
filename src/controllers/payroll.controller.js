@@ -1,5 +1,7 @@
 // File: src/controllers/payroll.controller.js
+const PDFDocument = require("pdfkit");
 const db = require("../db");
+
 
 // =====================================================
 // VALIDATION HELPERS
@@ -645,62 +647,167 @@ exports.generatePayslip = async (req, res) => {
     const currency = record.currency_code || "ZAR";
     const currencySymbol = currency === "ZAR" ? "R" : "$";
 
-    const payslip = `
-===========================================
-         PAYSLIP - ${record.company_name}
-===========================================
-Employee: ${record.first_name} ${record.last_name}
-Position: ${record.position}
-Department: ${record.department}
-Period: ${record.month}/${record.year}
--------------------------------------------
-EARNINGS:
-  Basic Salary:      ${currencySymbol} ${parseFloat(
-      record.basic_salary
-    ).toFixed(2)}
-  Allowances:        ${currencySymbol} ${parseFloat(record.allowances).toFixed(
-      2
-    )}
-  Bonuses:           ${currencySymbol} ${parseFloat(record.bonuses).toFixed(2)}
-  Overtime:          ${currencySymbol} ${parseFloat(record.overtime).toFixed(2)}
-  -------------------------------------------
-  GROSS PAY:         ${currencySymbol} ${parseFloat(record.gross_pay).toFixed(
-      2
-    )}
+    // Create PDF
+    const doc = new PDFDocument();
 
-DEDUCTIONS:
-  PAYE Tax:          ${currencySymbol} ${parseFloat(record.tax).toFixed(2)}
-  UIF:               ${currencySymbol} ${parseFloat(record.uif).toFixed(2)}
-  Pension:           ${currencySymbol} ${parseFloat(record.pension).toFixed(2)}
-  Medical Aid:       ${currencySymbol} ${parseFloat(record.medical_aid).toFixed(
-      2
-    )}
-  Other:             ${currencySymbol} ${parseFloat(
-      record.other_deductions
-    ).toFixed(2)}
-  -------------------------------------------
-  TOTAL DEDUCTIONS:  ${currencySymbol} ${parseFloat(
-      record.total_deductions
-    ).toFixed(2)}
-
-===========================================
-  NET PAY:           ${currencySymbol} ${parseFloat(record.net_pay).toFixed(2)}
-===========================================
-
-Payment Status: ${record.status.toUpperCase()}
-${record.payment_date ? `Payment Date: ${record.payment_date}` : ""}
-${record.payment_method ? `Payment Method: ${record.payment_method}` : ""}
-${record.payment_reference ? `Reference: ${record.payment_reference}` : ""}
-
-Generated: ${new Date().toLocaleString()}
-    `;
-
-    res.setHeader("Content-Type", "text/plain");
+    // Set PDF headers
+    res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="payslip-${record.last_name}-${record.month}-${record.year}.txt"`
+      `attachment; filename="payslip-${record.last_name}-${record.month}-${record.year}.pdf"`
     );
-    return res.send(payslip);
+
+    // Pipe PDF to response
+    doc.pipe(res);
+
+    // === PDF CONTENT ===
+
+    // Header
+    doc.fontSize(24).text("PAYSLIP", { align: "center" });
+    doc.moveDown(0.5);
+
+    // Company Info
+    doc.fontSize(14).text(record.company_name, { align: "center" });
+    doc.moveDown();
+
+    // Employee Details
+    doc.fontSize(12);
+    doc.text(`Employee: ${record.first_name} ${record.last_name}`);
+    doc.text(`Position: ${record.position || "N/A"}`);
+    doc.text(`Department: ${record.department || "N/A"}`);
+    doc.text(`Period: ${record.month}/${record.year}`);
+    doc.moveDown();
+
+    // Line separator
+    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+    doc.moveDown();
+
+    // EARNINGS
+    doc.fontSize(14).text("EARNINGS", { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(12);
+
+    doc.text(`Basic Salary:`, 50, doc.y, { continued: true });
+    doc.text(
+      `${currencySymbol} ${parseFloat(record.basic_salary).toFixed(2)}`,
+      { align: "right" }
+    );
+
+    doc.text(`Allowances:`, 50, doc.y, { continued: true });
+    doc.text(`${currencySymbol} ${parseFloat(record.allowances).toFixed(2)}`, {
+      align: "right",
+    });
+
+    doc.text(`Bonuses:`, 50, doc.y, { continued: true });
+    doc.text(`${currencySymbol} ${parseFloat(record.bonuses).toFixed(2)}`, {
+      align: "right",
+    });
+
+    doc.text(`Overtime:`, 50, doc.y, { continued: true });
+    doc.text(`${currencySymbol} ${parseFloat(record.overtime).toFixed(2)}`, {
+      align: "right",
+    });
+
+    doc.moveDown();
+    doc
+      .fontSize(13)
+      .text(`GROSS PAY:`, 50, doc.y, { continued: true, bold: true });
+    doc.text(`${currencySymbol} ${parseFloat(record.gross_pay).toFixed(2)}`, {
+      align: "right",
+      bold: true,
+    });
+    doc.moveDown();
+
+    // Line separator
+    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+    doc.moveDown();
+
+    // DEDUCTIONS
+    doc.fontSize(14).text("DEDUCTIONS", { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(12);
+
+    doc.text(`PAYE Tax:`, 50, doc.y, { continued: true });
+    doc.text(`${currencySymbol} ${parseFloat(record.tax).toFixed(2)}`, {
+      align: "right",
+    });
+
+    doc.text(`UIF:`, 50, doc.y, { continued: true });
+    doc.text(`${currencySymbol} ${parseFloat(record.uif).toFixed(2)}`, {
+      align: "right",
+    });
+
+    doc.text(`Pension:`, 50, doc.y, { continued: true });
+    doc.text(`${currencySymbol} ${parseFloat(record.pension).toFixed(2)}`, {
+      align: "right",
+    });
+
+    doc.text(`Medical Aid:`, 50, doc.y, { continued: true });
+    doc.text(`${currencySymbol} ${parseFloat(record.medical_aid).toFixed(2)}`, {
+      align: "right",
+    });
+
+    doc.text(`Other:`, 50, doc.y, { continued: true });
+    doc.text(
+      `${currencySymbol} ${parseFloat(record.other_deductions).toFixed(2)}`,
+      { align: "right" }
+    );
+
+    doc.moveDown();
+    doc
+      .fontSize(13)
+      .text(`TOTAL DEDUCTIONS:`, 50, doc.y, { continued: true, bold: true });
+    doc.text(
+      `${currencySymbol} ${parseFloat(record.total_deductions).toFixed(2)}`,
+      { align: "right", bold: true }
+    );
+    doc.moveDown();
+
+    // Line separator
+    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+    doc.moveDown();
+
+    // NET PAY
+    doc
+      .fontSize(16)
+      .text(`NET PAY:`, 50, doc.y, { continued: true, bold: true });
+    doc.text(`${currencySymbol} ${parseFloat(record.net_pay).toFixed(2)}`, {
+      align: "right",
+      bold: true,
+    });
+    doc.moveDown(2);
+
+    // Payment Info
+    doc.fontSize(11);
+    doc.text(`Payment Status: ${record.status.toUpperCase()}`);
+
+    if (record.payment_date) {
+      doc.text(`Payment Date: ${record.payment_date}`);
+    }
+
+    if (record.payment_method) {
+      doc.text(`Payment Method: ${record.payment_method}`);
+    }
+
+    if (record.payment_reference) {
+      doc.text(`Reference: ${record.payment_reference}`);
+    }
+
+    // Footer
+    doc.moveDown(2);
+    doc
+      .fontSize(10)
+      .text("This is a computer-generated payslip.", {
+        align: "center",
+        italics: true,
+      });
+    doc.text(`Generated: ${new Date().toLocaleString()}`, {
+      align: "center",
+      italics: true,
+    });
+
+    // Finalize PDF
+    doc.end();
   } catch (err) {
     console.error("=== ERROR in generatePayslip ===");
     console.error(err);
