@@ -2,55 +2,145 @@
 const db = require("../db");
 
 // =====================================================
-// HELPER FUNCTIONS
+// VALIDATION HELPERS
 // =====================================================
+const VALID_MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
+const VALID_PAYMENT_METHODS = ["bank_transfer", "cash", "check", "crypto"];
+const VALID_STATUSES = ["draft", "processed", "paid"];
+
 function toInt(value, fallback) {
   const n = parseInt(value, 10);
   return Number.isFinite(n) ? n : fallback;
 }
 
+function validateMonth(month) {
+  return VALID_MONTHS.includes(month);
+}
+
+function validateYear(year) {
+  const currentYear = new Date().getFullYear();
+  return year >= 2000 && year <= currentYear + 1;
+}
+
+function validatePaymentMethod(method) {
+  return VALID_PAYMENT_METHODS.includes(method);
+}
+
+function validateStatus(status) {
+  return VALID_STATUSES.includes(status);
+}
+
+// Simplified South African tax calculation (2024 tax brackets)
+function calculateTax(grossPay) {
+  const annualGross = grossPay * 12;
+  let annualTax;
+
+  if (annualGross <= 237100) {
+    annualTax = annualGross * 0.18;
+  } else if (annualGross <= 370500) {
+    annualTax = 42678 + (annualGross - 237100) * 0.26;
+  } else if (annualGross <= 512800) {
+    annualTax = 77362 + (annualGross - 370500) * 0.31;
+  } else if (annualGross <= 673000) {
+    annualTax = 121475 + (annualGross - 512800) * 0.36;
+  } else if (annualGross <= 857900) {
+    annualTax = 179147 + (annualGross - 673000) * 0.39;
+  } else if (annualGross <= 1817000) {
+    annualTax = 251258 + (annualGross - 857900) * 0.41;
+  } else {
+    annualTax = 644489 + (annualGross - 1817000) * 0.45;
+  }
+
+  return Math.max(0, annualTax / 12);
+}
+
 // =====================================================
 // GET PAYROLL SUMMARY
-// Get summary statistics for a payroll period
 // =====================================================
 exports.getPayrollSummary = async (req, res) => {
   try {
-    const companyId = req.user.company_id;
+    console.log("=== getPayrollSummary called ===");
+    console.log("req.user:", req.user);
+
+    const companyId = req.user?.company_id;
+    if (!companyId) {
+      console.error("No company_id in req.user");
+      return res
+        .status(400)
+        .json({ error: "Company ID not found in user session" });
+    }
+
     const month = toInt(req.query.month, new Date().getMonth() + 1);
     const year = toInt(req.query.year, new Date().getFullYear());
+
+    console.log("companyId:", companyId, "month:", month, "year:", year);
+
+    if (!validateMonth(month)) {
+      return res.status(400).json({ error: "Invalid month (1-12)" });
+    }
+    if (!validateYear(year)) {
+      return res.status(400).json({ error: "Invalid year" });
+    }
 
     const result = await db.query(
       `SELECT 
-    COUNT(*)::int as total_employees,
-    COALESCE(SUM(gross_pay), 0) as total_gross,
-    COALESCE(SUM(total_deductions), 0) as total_deductions,
-    COALESCE(SUM(net_pay), 0) as total_net,
-    COALESCE(SUM(tax), 0) as tax,  // <-- ADD THIS LINE
-    COUNT(CASE WHEN status = 'paid' THEN 1 END)::int as paid_count,
-    COUNT(CASE WHEN status = 'processed' THEN 1 END)::int as processed_count,
-    COUNT(CASE WHEN status = 'draft' THEN 1 END)::int as draft_count
-   FROM payroll_records
-   WHERE company_id = $1 AND month = $2 AND year = $3`,
+        CAST(COUNT(*) AS INTEGER) as total_employees,
+        COALESCE(SUM(gross_pay), 0) as total_gross,
+        COALESCE(SUM(total_deductions), 0) as total_deductions,
+        COALESCE(SUM(net_pay), 0) as total_net,
+        COALESCE(SUM(tax), 0) as tax,
+        CAST(COUNT(CASE WHEN status = 'paid' THEN 1 END) AS INTEGER) as paid_count,
+        CAST(COUNT(CASE WHEN status = 'processed' THEN 1 END) AS INTEGER) as processed_count,
+        CAST(COUNT(CASE WHEN status = 'draft' THEN 1 END) AS INTEGER) as draft_count
+       FROM payroll_records
+       WHERE company_id = $1 AND month = $2 AND year = $3`,
       [companyId, month, year]
     );
 
-    // ✅ ONLY CHANGE: Return the data even if empty (don't return 404)
+    console.log("Query result:", result.rows[0]);
+
     return res.json(result.rows[0]);
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to fetch payroll summary" });
+    console.error("=== ERROR in getPayrollSummary ===");
+    console.error("Error message:", err.message);
+    console.error("Error stack:", err.stack);
+    return res.status(500).json({
+      error: "Failed to fetch payroll summary",
+      details: err.message,
+    });
   }
 };
+
 // =====================================================
 // GET PAYROLL RECORDS
-// Get all payroll records for a period
 // =====================================================
 exports.getPayrollRecords = async (req, res) => {
   try {
-    const companyId = req.user.company_id;
+    const companyId = req.user?.company_id;
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID not found" });
+    }
+
     const month = toInt(req.query.month, new Date().getMonth() + 1);
     const year = toInt(req.query.year, new Date().getFullYear());
     const status = req.query.status;
+
+    if (!validateMonth(month)) {
+      return res.status(400).json({ error: "Invalid month (1-12)" });
+    }
+    if (!validateYear(year)) {
+      return res.status(400).json({ error: "Invalid year" });
+    }
+    if (status && !validateStatus(status)) {
+      return res.status(400).json({
+        error: "Invalid status",
+        valid_statuses: VALID_STATUSES,
+      });
+    }
+
+    const page = toInt(req.query.page, 1);
+    const perPage = Math.min(toInt(req.query.per_page, 50), 100);
+    const offset = (page - 1) * perPage;
 
     let query = `
       SELECT 
@@ -88,40 +178,83 @@ exports.getPayrollRecords = async (req, res) => {
     `;
 
     const params = [companyId, month, year];
+    let paramIndex = 3;
 
     if (status) {
-      query += ` AND pr.status = $4`;
+      paramIndex++;
+      query += ` AND pr.status = $${paramIndex}`;
       params.push(status);
     }
 
     query += ` ORDER BY e.last_name, e.first_name`;
 
+    paramIndex++;
+    query += ` LIMIT $${paramIndex}`;
+    params.push(perPage);
+
+    paramIndex++;
+    query += ` OFFSET $${paramIndex}`;
+    params.push(offset);
+
     const result = await db.query(query, params);
 
-    // ✅ ONLY CHANGE: Always return array (even if empty)
+    let countQuery = `
+      SELECT CAST(COUNT(*) AS INTEGER) as total 
+      FROM payroll_records pr
+      JOIN employees e ON pr.employee_id = e.id
+      WHERE pr.company_id = $1 AND pr.month = $2 AND pr.year = $3
+    `;
+    const countParams = [companyId, month, year];
+
+    if (status) {
+      countQuery += ` AND pr.status = $4`;
+      countParams.push(status);
+    }
+
+    const countResult = await db.query(countQuery, countParams);
+
+    // NOTE: frontend expects an array, not paginated object
+    // Return flat array to stay compatible with existing frontend
     return res.json(result.rows);
   } catch (err) {
+    console.error("=== ERROR in getPayrollRecords ===");
     console.error(err);
-    return res.status(500).json({ error: "Failed to fetch payroll records" });
+    return res.status(500).json({
+      error: "Failed to fetch payroll records",
+      details: err.message,
+    });
   }
 };
 
 // =====================================================
 // INITIALIZE PAYROLL PERIOD
-// Create payroll records for all active employees
 // =====================================================
 exports.initializePayrollPeriod = async (req, res) => {
   try {
-    const companyId = req.user.company_id;
+    const companyId = req.user?.company_id;
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID not found" });
+    }
+
     const { month, year } = req.body;
 
     if (!month || !year) {
       return res.status(400).json({ error: "Month and year are required" });
     }
 
+    const monthInt = toInt(month, 0);
+    const yearInt = toInt(year, 0);
+
+    if (!validateMonth(monthInt)) {
+      return res.status(400).json({ error: "Invalid month (1-12)" });
+    }
+    if (!validateYear(yearInt)) {
+      return res.status(400).json({ error: "Invalid year" });
+    }
+
     const result = await db.query(
       `SELECT initialize_payroll_period($1, $2, $3) as count`,
-      [companyId, month, year]
+      [companyId, monthInt, yearInt]
     );
 
     return res.json({
@@ -129,20 +262,26 @@ exports.initializePayrollPeriod = async (req, res) => {
       count: result.rows[0].count,
     });
   } catch (err) {
+    console.error("=== ERROR in initializePayrollPeriod ===");
     console.error(err);
-    return res
-      .status(500)
-      .json({ error: "Failed to initialize payroll period" });
+    return res.status(500).json({
+      error: "Failed to initialize payroll period",
+      details: err.message,
+    });
   }
 };
 
 // =====================================================
 // UPDATE PAYROLL RECORD
-// Update allowances, bonuses, overtime, or other fields
 // =====================================================
 exports.updatePayrollRecord = async (req, res) => {
+  let client;
   try {
-    const companyId = req.user.company_id;
+    const companyId = req.user?.company_id;
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID not found" });
+    }
+
     const recordId = toInt(req.params.id, 0);
     const {
       allowances,
@@ -157,54 +296,164 @@ exports.updatePayrollRecord = async (req, res) => {
       return res.status(400).json({ error: "Invalid record ID" });
     }
 
-    // Verify record belongs to company
-    const checkResult = await db.query(
-      `SELECT id FROM payroll_records WHERE id = $1 AND company_id = $2`,
+    client = await db.connect();
+    await client.query("BEGIN");
+
+    const checkResult = await client.query(
+      `SELECT pr.*, e.basic_salary, e.custom_tax_rate
+       FROM payroll_records pr
+       JOIN employees e ON pr.employee_id = e.id
+       WHERE pr.id = $1 AND pr.company_id = $2
+       FOR UPDATE`,
       [recordId, companyId]
     );
 
     if (checkResult.rows.length === 0) {
+      await client.query("ROLLBACK");
       return res.status(404).json({ error: "Payroll record not found" });
     }
 
-    const result = await db.query(
+    const current = checkResult.rows[0];
+
+    const oldValues = {
+      allowances: current.allowances,
+      bonuses: current.bonuses,
+      overtime: current.overtime,
+      medical_aid: current.medical_aid,
+      other_deductions: current.other_deductions,
+      gross_pay: current.gross_pay,
+      tax: current.tax,
+      total_deductions: current.total_deductions,
+      net_pay: current.net_pay,
+    };
+
+    const newAllowances =
+      allowances !== undefined ? parseFloat(allowances) : current.allowances;
+    const newBonuses =
+      bonuses !== undefined ? parseFloat(bonuses) : current.bonuses;
+    const newOvertime =
+      overtime !== undefined ? parseFloat(overtime) : current.overtime;
+    const newMedicalAid =
+      medical_aid !== undefined ? parseFloat(medical_aid) : current.medical_aid;
+    const newOtherDeductions =
+      other_deductions !== undefined
+        ? parseFloat(other_deductions)
+        : current.other_deductions;
+
+    const newGross =
+      parseFloat(current.basic_salary) +
+      newAllowances +
+      newBonuses +
+      newOvertime;
+
+    const newTax = current.custom_tax_rate
+      ? newGross * (current.custom_tax_rate / 100)
+      : calculateTax(newGross);
+
+    const newTotalDeductions =
+      newTax +
+      parseFloat(current.uif) +
+      parseFloat(current.pension) +
+      newMedicalAid +
+      newOtherDeductions;
+    const newNet = newGross - newTotalDeductions;
+
+    const result = await client.query(
       `UPDATE payroll_records
        SET 
-         allowances = COALESCE($1, allowances),
-         bonuses = COALESCE($2, bonuses),
-         overtime = COALESCE($3, overtime),
-         medical_aid = COALESCE($4, medical_aid),
-         other_deductions = COALESCE($5, other_deductions),
+         allowances = $1,
+         bonuses = $2,
+         overtime = $3,
+         medical_aid = $4,
+         other_deductions = $5,
          notes = COALESCE($6, notes),
+         gross_pay = $7,
+         tax = $8,
+         total_deductions = $9,
+         net_pay = $10,
          updated_at = NOW()
-       WHERE id = $7
+       WHERE id = $11
        RETURNING *`,
       [
-        allowances,
-        bonuses,
-        overtime,
-        medical_aid,
-        other_deductions,
+        newAllowances,
+        newBonuses,
+        newOvertime,
+        newMedicalAid,
+        newOtherDeductions,
         notes,
+        newGross,
+        newTax,
+        newTotalDeductions,
+        newNet,
         recordId,
       ]
     );
 
+    await client.query(
+      `INSERT INTO payroll_audit_log 
+       (payroll_record_id, changed_by, action, old_values, new_values, notes, created_at)
+       VALUES ($1, $2, 'update', $3, $4, $5, NOW())`,
+      [
+        recordId,
+        req.user.id,
+        JSON.stringify(oldValues),
+        JSON.stringify({
+          allowances: newAllowances,
+          bonuses: newBonuses,
+          overtime: newOvertime,
+          medical_aid: newMedicalAid,
+          other_deductions: newOtherDeductions,
+          gross_pay: newGross,
+          tax: newTax,
+          total_deductions: newTotalDeductions,
+          net_pay: newNet,
+        }),
+        notes || null,
+      ]
+    );
+
+    await client.query("COMMIT");
+
     return res.json(result.rows[0]);
   } catch (err) {
+    if (client) await client.query("ROLLBACK");
+    console.error("=== ERROR in updatePayrollRecord ===");
     console.error(err);
-    return res.status(500).json({ error: "Failed to update payroll record" });
+    return res.status(500).json({
+      error: "Failed to update payroll record",
+      details: err.message,
+    });
+  } finally {
+    if (client) client.release();
   }
 };
 
 // =====================================================
 // PROCESS PAYROLL
-// Mark selected records as processed
 // =====================================================
 exports.processPayroll = async (req, res) => {
+  let client;
   try {
-    const companyId = req.user.company_id;
+    const companyId = req.user?.company_id;
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID not found" });
+    }
+
     const { employee_ids, month, year } = req.body;
+
+    if (!month || !year) {
+      return res.status(400).json({ error: "Month and year are required" });
+    }
+
+    const monthInt = toInt(month, 0);
+    const yearInt = toInt(year, 0);
+
+    if (!validateMonth(monthInt)) {
+      return res.status(400).json({ error: "Invalid month (1-12)" });
+    }
+    if (!validateYear(yearInt)) {
+      return res.status(400).json({ error: "Invalid year" });
+    }
 
     if (
       !employee_ids ||
@@ -214,47 +463,64 @@ exports.processPayroll = async (req, res) => {
       return res.status(400).json({ error: "Employee IDs array is required" });
     }
 
-    await db.query("BEGIN");
+    const validIds = employee_ids
+      .map((id) => toInt(id, 0))
+      .filter((id) => id > 0);
+    if (validIds.length !== employee_ids.length) {
+      return res.status(400).json({ error: "Invalid employee IDs provided" });
+    }
 
-    // Update status to processed
-    const result = await db.query(
+    client = await db.connect();
+    await client.query("BEGIN");
+
+    const result = await client.query(
       `UPDATE payroll_records
        SET status = 'processed', updated_at = NOW()
        WHERE company_id = $1 AND month = $2 AND year = $3 
          AND employee_id = ANY($4) AND status = 'draft'
-       RETURNING id`,
-      [companyId, month, year, employee_ids]
+       RETURNING id, employee_id`,
+      [companyId, monthInt, yearInt, validIds]
     );
 
-    // Log audit trail
     for (const row of result.rows) {
-      await db.query(
-        `INSERT INTO payroll_audit_log (payroll_record_id, changed_by, action, old_status, new_status)
-         VALUES ($1, $2, 'process', 'draft', 'processed')`,
+      await client.query(
+        `INSERT INTO payroll_audit_log (payroll_record_id, changed_by, action, old_status, new_status, created_at)
+         VALUES ($1, $2, 'process', 'draft', 'processed', NOW())`,
         [row.id, req.user.id]
       );
     }
 
-    await db.query("COMMIT");
+    await client.query("COMMIT");
 
     return res.json({
       message: `Processed ${result.rows.length} payroll records`,
       count: result.rows.length,
+      processed_ids: result.rows.map((r) => r.employee_id),
     });
   } catch (err) {
-    await db.query("ROLLBACK");
+    if (client) await client.query("ROLLBACK");
+    console.error("=== ERROR in processPayroll ===");
     console.error(err);
-    return res.status(500).json({ error: "Failed to process payroll" });
+    return res.status(500).json({
+      error: "Failed to process payroll",
+      details: err.message,
+    });
+  } finally {
+    if (client) client.release();
   }
 };
 
 // =====================================================
 // MARK AS PAID
-// Mark a payroll record as paid
 // =====================================================
 exports.markAsPaid = async (req, res) => {
+  let client;
   try {
-    const companyId = req.user.company_id;
+    const companyId = req.user?.company_id;
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID not found" });
+    }
+
     const recordId = toInt(req.params.id, 0);
     const { payment_method, payment_date, payment_reference } = req.body;
 
@@ -262,63 +528,101 @@ exports.markAsPaid = async (req, res) => {
       return res.status(400).json({ error: "Invalid record ID" });
     }
 
-    await db.query("BEGIN");
+    if (payment_method && !validatePaymentMethod(payment_method)) {
+      return res.status(400).json({
+        error: "Invalid payment method",
+        valid_methods: VALID_PAYMENT_METHODS,
+      });
+    }
 
-    const result = await db.query(
+    if (payment_date && isNaN(Date.parse(payment_date))) {
+      return res.status(400).json({
+        error: "Invalid payment date format",
+        format: "YYYY-MM-DD",
+      });
+    }
+
+    client = await db.connect();
+    await client.query("BEGIN");
+
+    const result = await client.query(
       `UPDATE payroll_records
        SET 
          status = 'paid',
-         payment_method = $1,
-         payment_date = $2,
-         payment_reference = $3,
+         payment_method = COALESCE($1, payment_method),
+         payment_date = COALESCE($2, payment_date),
+         payment_reference = COALESCE($3, payment_reference),
          updated_at = NOW()
-       WHERE id = $4 AND company_id = $5
+       WHERE id = $4 AND company_id = $5 AND status != 'paid'
        RETURNING *`,
       [payment_method, payment_date, payment_reference, recordId, companyId]
     );
 
     if (result.rows.length === 0) {
-      await db.query("ROLLBACK");
-      return res.status(404).json({ error: "Payroll record not found" });
+      await client.query("ROLLBACK");
+      const check = await db.query(
+        `SELECT status FROM payroll_records WHERE id = $1 AND company_id = $2`,
+        [recordId, companyId]
+      );
+      if (check.rows.length === 0) {
+        return res.status(404).json({ error: "Payroll record not found" });
+      }
+      if (check.rows[0].status === "paid") {
+        return res.status(409).json({ error: "Record already marked as paid" });
+      }
+      return res.status(400).json({ error: "Unable to mark as paid" });
     }
 
-    // Log audit trail
-    await db.query(
-      `INSERT INTO payroll_audit_log (payroll_record_id, changed_by, action, old_status, new_status, notes)
-       VALUES ($1, $2, 'mark_paid', 'processed', 'paid', $3)`,
-      [recordId, req.user.id, `Payment via ${payment_method}`]
+    await client.query(
+      `INSERT INTO payroll_audit_log (payroll_record_id, changed_by, action, old_status, new_status, notes, created_at)
+       VALUES ($1, $2, 'mark_paid', 'processed', 'paid', $3, NOW())`,
+      [recordId, req.user.id, `Payment via ${payment_method || "unknown"}`]
     );
 
-    await db.query("COMMIT");
+    await client.query("COMMIT");
 
     return res.json(result.rows[0]);
   } catch (err) {
-    await db.query("ROLLBACK");
+    if (client) await client.query("ROLLBACK");
+    console.error("=== ERROR in markAsPaid ===");
     console.error(err);
-    return res.status(500).json({ error: "Failed to mark as paid" });
+    return res.status(500).json({
+      error: "Failed to mark as paid",
+      details: err.message,
+    });
+  } finally {
+    if (client) client.release();
   }
 };
 
 // =====================================================
-// GENERATE PAYSLIP (Simple PDF)
+// GENERATE PAYSLIP
 // =====================================================
 exports.generatePayslip = async (req, res) => {
   try {
-    const companyId = req.user.company_id;
+    const companyId = req.user?.company_id;
+    const userRole = req.user?.role;
+    const userEmployeeId = req.user?.employee_id;
+
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID not found" });
+    }
+
     const recordId = toInt(req.params.id, 0);
 
     if (!recordId) {
       return res.status(400).json({ error: "Invalid record ID" });
     }
 
-    // Get payroll record with employee details
     const result = await db.query(
       `SELECT 
-    pr.*,
-    e.first_name, e.last_name, e.email, e.position, e.department
-   FROM payroll_records pr
-   JOIN employees e ON pr.employee_id = e.id
-   WHERE pr.id = $1 AND pr.company_id = $2`,
+        pr.*,
+        e.first_name, e.last_name, e.email, e.position, e.department, e.id as emp_id,
+        c.name as company_name, c.currency_code
+      FROM payroll_records pr
+      JOIN employees e ON pr.employee_id = e.id
+      JOIN companies c ON pr.company_id = c.id
+      WHERE pr.id = $1 AND pr.company_id = $2`,
       [recordId, companyId]
     );
 
@@ -328,10 +632,22 @@ exports.generatePayslip = async (req, res) => {
 
     const record = result.rows[0];
 
-    // Simple text-based payslip (you can upgrade to PDF library later)
+    if (
+      userRole !== "admin" &&
+      userRole !== "manager" &&
+      record.emp_id !== userEmployeeId
+    ) {
+      return res
+        .status(403)
+        .json({ error: "Unauthorized to view this payslip" });
+    }
+
+    const currency = record.currency_code || "ZAR";
+    const currencySymbol = currency === "ZAR" ? "R" : "$";
+
     const payslip = `
 ===========================================
-         PAYSLIP - Company ID: ${record.company_id}
+         PAYSLIP - ${record.company_name}
 ===========================================
 Employee: ${record.first_name} ${record.last_name}
 Position: ${record.position}
@@ -339,29 +655,42 @@ Department: ${record.department}
 Period: ${record.month}/${record.year}
 -------------------------------------------
 EARNINGS:
-  Basic Salary:      R ${record.basic_salary.toFixed(2)}
-  Allowances:        R ${record.allowances.toFixed(2)}
-  Bonuses:           R ${record.bonuses.toFixed(2)}
-  Overtime:          R ${record.overtime.toFixed(2)}
-                    ────────────────
-  GROSS PAY:         R ${record.gross_pay.toFixed(2)}
+  Basic Salary:      ${currencySymbol} ${parseFloat(
+      record.basic_salary
+    ).toFixed(2)}
+  Allowances:        ${currencySymbol} ${parseFloat(record.allowances).toFixed(
+      2
+    )}
+  Bonuses:           ${currencySymbol} ${parseFloat(record.bonuses).toFixed(2)}
+  Overtime:          ${currencySymbol} ${parseFloat(record.overtime).toFixed(2)}
+  -------------------------------------------
+  GROSS PAY:         ${currencySymbol} ${parseFloat(record.gross_pay).toFixed(
+      2
+    )}
 
 DEDUCTIONS:
-  PAYE Tax:          R ${record.tax.toFixed(2)}
-  UIF:               R ${record.uif.toFixed(2)}
-  Pension:           R ${record.pension.toFixed(2)}
-  Medical Aid:       R ${record.medical_aid.toFixed(2)}
-  Other:             R ${record.other_deductions.toFixed(2)}
-                    ────────────────
-  TOTAL DEDUCTIONS:  R ${record.total_deductions.toFixed(2)}
+  PAYE Tax:          ${currencySymbol} ${parseFloat(record.tax).toFixed(2)}
+  UIF:               ${currencySymbol} ${parseFloat(record.uif).toFixed(2)}
+  Pension:           ${currencySymbol} ${parseFloat(record.pension).toFixed(2)}
+  Medical Aid:       ${currencySymbol} ${parseFloat(record.medical_aid).toFixed(
+      2
+    )}
+  Other:             ${currencySymbol} ${parseFloat(
+      record.other_deductions
+    ).toFixed(2)}
+  -------------------------------------------
+  TOTAL DEDUCTIONS:  ${currencySymbol} ${parseFloat(
+      record.total_deductions
+    ).toFixed(2)}
 
-═══════════════════════════════════════════
-  NET PAY:           R ${record.net_pay.toFixed(2)}
-═══════════════════════════════════════════
+===========================================
+  NET PAY:           ${currencySymbol} ${parseFloat(record.net_pay).toFixed(2)}
+===========================================
 
 Payment Status: ${record.status.toUpperCase()}
 ${record.payment_date ? `Payment Date: ${record.payment_date}` : ""}
 ${record.payment_method ? `Payment Method: ${record.payment_method}` : ""}
+${record.payment_reference ? `Reference: ${record.payment_reference}` : ""}
 
 Generated: ${new Date().toLocaleString()}
     `;
@@ -369,50 +698,93 @@ Generated: ${new Date().toLocaleString()}
     res.setHeader("Content-Type", "text/plain");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="payslip-${recordId}.txt"`
+      `attachment; filename="payslip-${record.last_name}-${record.month}-${record.year}.txt"`
     );
     return res.send(payslip);
   } catch (err) {
+    console.error("=== ERROR in generatePayslip ===");
     console.error(err);
-    return res.status(500).json({ error: "Failed to generate payslip" });
+    return res.status(500).json({
+      error: "Failed to generate payslip",
+      details: err.message,
+    });
   }
 };
 
 // =====================================================
 // GET PAYROLL HISTORY
-// Get payroll records across multiple periods
 // =====================================================
 exports.getPayrollHistory = async (req, res) => {
   try {
-    const companyId = req.user.company_id;
+    const companyId = req.user?.company_id;
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID not found" });
+    }
+
     const employeeId = toInt(req.query.employee_id, 0);
-    const limit = toInt(req.query.limit, 12);
+    const page = toInt(req.query.page, 1);
+    const perPage = Math.min(toInt(req.query.per_page, 50), 100);
+    const offset = (page - 1) * perPage;
 
     let query = `
       SELECT 
         pr.id, pr.month, pr.year, pr.gross_pay, pr.total_deductions, pr.net_pay, pr.status,
-        e.first_name, e.last_name
+        pr.payment_method, pr.payment_date,
+        e.first_name, e.last_name, e.id as emp_id
       FROM payroll_records pr
       JOIN employees e ON pr.employee_id = e.id
       WHERE pr.company_id = $1
     `;
 
     const params = [companyId];
+    let paramIndex = 1;
 
     if (employeeId > 0) {
-      query += ` AND pr.employee_id = $2`;
+      paramIndex++;
+      query += ` AND pr.employee_id = $${paramIndex}`;
       params.push(employeeId);
     }
 
-    query += ` ORDER BY pr.year DESC, pr.month DESC LIMIT $${
-      params.length + 1
-    }`;
-    params.push(limit);
+    paramIndex++;
+    query += ` ORDER BY pr.year DESC, pr.month DESC LIMIT $${paramIndex}`;
+    params.push(perPage);
+
+    paramIndex++;
+    query += ` OFFSET $${paramIndex}`;
+    params.push(offset);
 
     const result = await db.query(query, params);
-    return res.json(result.rows);
+
+    let countQuery = `
+      SELECT CAST(COUNT(*) AS INTEGER) as total 
+      FROM payroll_records pr
+      JOIN employees e ON pr.employee_id = e.id
+      WHERE pr.company_id = $1
+    `;
+    const countParams = [companyId];
+
+    if (employeeId > 0) {
+      countQuery += ` AND pr.employee_id = $2`;
+      countParams.push(employeeId);
+    }
+
+    const countResult = await db.query(countQuery, countParams);
+
+    return res.json({
+      data: result.rows,
+      pagination: {
+        page: page,
+        per_page: perPage,
+        total: countResult.rows[0].total,
+        total_pages: Math.ceil(countResult.rows[0].total / perPage),
+      },
+    });
   } catch (err) {
+    console.error("=== ERROR in getPayrollHistory ===");
     console.error(err);
-    return res.status(500).json({ error: "Failed to fetch payroll history" });
+    return res.status(500).json({
+      error: "Failed to fetch payroll history",
+      details: err.message,
+    });
   }
 };
