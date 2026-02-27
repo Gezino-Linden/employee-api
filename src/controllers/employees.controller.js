@@ -56,7 +56,7 @@ async function fetchEmployeesForExport(req) {
 
   const result = await db.query(
     `SELECT id, first_name, last_name, email, department, position,
-            ROUND(salary, 2) AS salary,
+            ROUND(salary, 2) AS salary, age,
             is_active, created_at, company_id
      FROM employees
      WHERE ${where.join(" AND ")}
@@ -115,7 +115,7 @@ exports.getEmployees = async (req, res) => {
 
     const listRes = await db.query(
       `SELECT id, first_name, last_name, email, department, position,
-              ROUND(salary, 2) AS salary,
+              ROUND(salary, 2) AS salary, age,
               is_active, created_at, company_id
        FROM employees
        WHERE ${where.join(" AND ")}
@@ -145,7 +145,7 @@ exports.getEmployeeById = async (req, res) => {
 
     const result = await db.query(
       `SELECT id, first_name, last_name, email, department, position,
-              ROUND(salary, 2) AS salary,
+              ROUND(salary, 2) AS salary, age,
               is_active, created_at, company_id
        FROM employees
        WHERE id=$1 AND company_id=$2`,
@@ -173,6 +173,7 @@ exports.createEmployee = async (req, res) => {
     const department = cleanStr(req.body.department);
     const position = cleanStr(req.body.position);
     const salary = Number(req.body.salary ?? 0);
+    const age = toInt(req.body.age, null);
 
     if (first_name.length < 2)
       return res
@@ -193,12 +194,21 @@ exports.createEmployee = async (req, res) => {
         .json({ error: "salary must be a non-negative number" });
 
     const result = await db.query(
-      `INSERT INTO employees (first_name, last_name, email, department, position, salary, is_active, company_id)
-       VALUES ($1,$2,$3,$4,$5,$6,true,$7)
+      `INSERT INTO employees (first_name, last_name, email, department, position, salary, age, is_active, company_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,true,$8)
        RETURNING id, first_name, last_name, email, department, position,
-                 ROUND(salary, 2) AS salary,
+                 ROUND(salary, 2) AS salary, age,
                  is_active, created_at, company_id`,
-      [first_name, last_name, email, department, position, salary, companyId]
+      [
+        first_name,
+        last_name,
+        email,
+        department,
+        position,
+        salary,
+        age,
+        companyId,
+      ]
     );
 
     return res.status(201).json(result.rows[0]);
@@ -224,6 +234,8 @@ exports.updateEmployee = async (req, res) => {
     const position = cleanStr(req.body.position);
     const salary =
       req.body.salary !== undefined ? Number(req.body.salary) : undefined;
+    const age =
+      req.body.age !== undefined ? toInt(req.body.age, null) : undefined;
 
     if (first_name && first_name.length < 2)
       return res
@@ -244,10 +256,10 @@ exports.updateEmployee = async (req, res) => {
     const result = await db.query(
       `UPDATE employees
        SET first_name=$1, last_name=$2, email=$3, department=$4, position=$5,
-           salary=COALESCE($6, salary)
-       WHERE id=$7 AND company_id=$8
+           salary=COALESCE($6, salary), age=COALESCE($7, age)
+       WHERE id=$8 AND company_id=$9
        RETURNING id, first_name, last_name, email, department, position,
-                 ROUND(salary, 2) AS salary,
+                 ROUND(salary, 2) AS salary, age,
                  is_active, created_at, company_id`,
       [
         first_name,
@@ -256,6 +268,7 @@ exports.updateEmployee = async (req, res) => {
         department,
         position,
         salary,
+        age,
         id,
         companyId,
       ]
