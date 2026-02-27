@@ -11,7 +11,7 @@ const employeesRoutes = require("./routes/employees.routes");
 const reportsRoutes = require("./routes/reports.routes");
 const leaveRoutes = require("./routes/leave.routes");
 const payrollRoutes = require("./routes/payroll.routes");
-
+const attendanceRoutes = require("./routes/attendance.routes");
 
 const db = require("./db");
 const { requireAuth } = require("./middleware");
@@ -128,6 +128,8 @@ app.use("/api/reports", reportsRoutes);
 app.use("/api/companies", companiesRoutes);
 app.use("/api/leave", leaveRoutes);
 app.use("/api/payroll", payrollRoutes);
+
+app.use("/api/attendance", attendanceRoutes);
 
 // 404
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
