@@ -85,11 +85,11 @@ exports.clockIn = async (req, res) => {
 
     // Get employee's expected hours and hourly rate
     const empResult = await db.query(
-      `SELECT basic_salary FROM employees WHERE id = $1 AND company_id = $2`,
+      `SELECT salary FROM employees WHERE id = $1 AND company_id = $2`,
       [employeeId, companyId]
     );
 
-    const basicSalary = empResult.rows[0]?.basic_salary || 0;
+    const basicSalary = empResult.rows[0]?.salary || 0;
     const hourlyRate = basicSalary > 0 ? basicSalary / (22 * 8) : 0; // ~22 working days, 8hrs/day
 
     const expectedStart = req.body.expected_start || "08:00";
