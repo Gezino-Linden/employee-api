@@ -512,7 +512,7 @@ exports.adminOverride = async (req, res) => {
     }
 
     const empResult = await db.query(
-      `SELECT basic_salary FROM employees WHERE id = $1 AND company_id = $2`,
+      `SELECT salary FROM employees WHERE id = $1 AND company_id = $2`,
       [employee_id, companyId]
     );
     const basicSalary = empResult.rows[0]?.salary || 0;
