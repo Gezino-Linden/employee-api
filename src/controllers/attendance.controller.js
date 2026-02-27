@@ -515,7 +515,7 @@ exports.adminOverride = async (req, res) => {
       `SELECT basic_salary FROM employees WHERE id = $1 AND company_id = $2`,
       [employee_id, companyId]
     );
-    const basicSalary = empResult.rows[0]?.basic_salary || 0;
+    const basicSalary = empResult.rows[0]?.salary || 0;
     const hourlyRate = basicSalary > 0 ? basicSalary / (22 * 8) : 0;
 
     const clockInDate = clock_in ? new Date(clock_in) : null;
