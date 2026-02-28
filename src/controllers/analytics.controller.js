@@ -13,7 +13,7 @@ exports.getLeaveAnalytics = async (req, res) => {
       return res.status(400).json({ error: "Company ID missing" });
     }
 
-    // Monthly trends data
+    // Monthly trends data (REMOVED deleted_at filter)
     const monthlyQuery = `
       SELECT 
         EXTRACT(MONTH FROM start_date) as month,
@@ -25,7 +25,6 @@ exports.getLeaveAnalytics = async (req, res) => {
       FROM leave_requests
       WHERE company_id = $1 
         AND EXTRACT(YEAR FROM start_date) = $2
-        AND deleted_at IS NULL
       GROUP BY EXTRACT(MONTH FROM start_date)
       ORDER BY month
     `;
@@ -62,7 +61,7 @@ exports.getLeaveAnalytics = async (req, res) => {
       };
     });
 
-    // Leave type breakdown
+    // Leave type breakdown (REMOVED deleted_at filter)
     const typeQuery = `
       SELECT 
         lt.name as type_name,
@@ -72,14 +71,13 @@ exports.getLeaveAnalytics = async (req, res) => {
       JOIN leave_types lt ON lr.leave_type_id = lt.id
       WHERE lr.company_id = $1 
         AND EXTRACT(YEAR FROM lr.start_date) = $2
-        AND lr.deleted_at IS NULL
       GROUP BY lt.name
       ORDER BY requests DESC
     `;
 
     const typeResult = await db.query(typeQuery, [companyId, year]);
 
-    // Summary stats
+    // Summary stats (REMOVED deleted_at filter)
     const summaryQuery = `
       SELECT 
         COUNT(*) as total_requests,
@@ -90,7 +88,6 @@ exports.getLeaveAnalytics = async (req, res) => {
       FROM leave_requests
       WHERE company_id = $1 
         AND EXTRACT(YEAR FROM start_date) = $2
-        AND deleted_at IS NULL
     `;
 
     const summaryResult = await db.query(summaryQuery, [companyId, year]);
@@ -121,8 +118,9 @@ exports.getLeaveAnalytics = async (req, res) => {
   } catch (err) {
     console.error("=== ERROR in getLeaveAnalytics ===");
     console.error(err);
-    res
-      .status(500)
-      .json({ error: "Failed to fetch analytics", details: err.message });
+    res.status(500).json({
+      error: "Failed to fetch analytics",
+      details: err.message,
+    });
   }
 };
