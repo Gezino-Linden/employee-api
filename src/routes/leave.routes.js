@@ -2,6 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const leaveController = require("../controllers/leave.controller");
+const analyticsController = require("../controllers/analytics.controller"); // ADD THIS LINE
 const { requireAuth, requireRoles } = require("../middleware");
 
 /**
@@ -81,12 +82,13 @@ router.get(
   requireRoles("admin", "manager"),
   leaveController.getTeamLeaves
 );
+
 // ===== ANALYTICS =====
 router.get(
   "/analytics",
   requireAuth,
   requireRoles("admin", "manager"),
-  require("../controllers/analytics.controller").getLeaveAnalytics
+  analyticsController.getLeaveAnalytics // USE THE IMPORTED CONTROLLER
 );
 
 module.exports = router;
