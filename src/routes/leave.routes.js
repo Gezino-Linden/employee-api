@@ -81,5 +81,12 @@ router.get(
   requireRoles("admin", "manager"),
   leaveController.getTeamLeaves
 );
+// ===== ANALYTICS =====
+router.get(
+  "/analytics",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  require("../controllers/analytics.controller").getLeaveAnalytics
+);
 
 module.exports = router;
