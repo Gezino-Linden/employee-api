@@ -79,5 +79,12 @@ router.patch(
   requireRoles("admin"),
   employeesController.updateEmployeeSalary
 );
+// SALARY HISTORY (admin only)
+router.get(
+  "/:id/salary-history",
+  requireAuth,
+  requireRoles("admin"),
+  employeesController.getSalaryHistory
+);
 
 module.exports = router;

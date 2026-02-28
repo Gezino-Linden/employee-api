@@ -33,10 +33,12 @@ function validateStatus(status) {
 }
 
 // Simplified South African tax calculation (2024 tax brackets)
-function calculateTax(grossPay) {
+// South African PAYE Tax Calculation (2024/2025)
+function calculateTax(grossPay, age = 30) {
   const annualGross = grossPay * 12;
   let annualTax;
 
+  // Step 1: Calculate tax from brackets
   if (annualGross <= 237100) {
     annualTax = annualGross * 0.18;
   } else if (annualGross <= 370500) {
@@ -53,6 +55,34 @@ function calculateTax(grossPay) {
     annualTax = 644489 + (annualGross - 1817000) * 0.45;
   }
 
+  // Step 2: Subtract rebates (2024/2025 SARS values)
+  const PRIMARY_REBATE   = 17235; // Under 65
+  const SECONDARY_REBATE = 9444;  // 65–74
+  const TERTIARY_REBATE  = 3145;  // 75+
+
+  if (age < 65) {
+    annualTax -= PRIMARY_REBATE;
+  } else if (age < 75) {
+    annualTax -= (PRIMARY_REBATE + SECONDARY_REBATE);
+  } else {
+    annualTax -= (PRIMARY_REBATE + SECONDARY_REBATE + TERTIARY_REBATE);
+  }
+
+  // Step 3: Tax threshold check — below threshold = R0 tax
+  // 2024/2025 thresholds
+  const TAX_THRESHOLD_UNDER_65 = 95750;
+  const TAX_THRESHOLD_65_TO_74 = 148217;
+  const TAX_THRESHOLD_75_PLUS  = 165689;
+
+  let threshold = TAX_THRESHOLD_UNDER_65;
+  if (age >= 75) threshold = TAX_THRESHOLD_75_PLUS;
+  else if (age >= 65) threshold = TAX_THRESHOLD_65_TO_74;
+
+  if (annualGross <= threshold) {
+    return 0;
+  }
+
+  // Monthly tax, never negative
   return Math.max(0, annualTax / 12);
 }
 
@@ -302,7 +332,7 @@ exports.updatePayrollRecord = async (req, res) => {
     await client.query("BEGIN");
 
     const checkResult = await client.query(
-      `SELECT pr.*, e.basic_salary, e.custom_tax_rate
+      `SELECT pr.*, e.salary AS basic_salary, e.custom_tax_rate
        FROM payroll_records pr
        JOIN employees e ON pr.employee_id = e.id
        WHERE pr.id = $1 AND pr.company_id = $2
@@ -350,7 +380,7 @@ exports.updatePayrollRecord = async (req, res) => {
 
     const newTax = current.custom_tax_rate
       ? newGross * (current.custom_tax_rate / 100)
-      : calculateTax(newGross);
+      : calculateTax(newGross, current.age || 30);
 
     const newTotalDeductions =
       newTax +

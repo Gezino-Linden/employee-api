@@ -469,3 +469,23 @@ exports.exportEmployeesXlsx = async (req, res) => {
     return res.status(500).json({ error: "export xlsx failed" });
   }
 };
+exports.getSalaryHistory = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const id = toInt(req.params.id, 0);
+    if (!id) return res.status(400).json({ error: "invalid id" });
+
+    const result = await db.query(
+      `SELECT id, employee_id, old_salary, new_salary, changed_at
+       FROM employee_salary_audit
+       WHERE employee_id = $1 AND company_id = $2
+       ORDER BY changed_at DESC`,
+      [id, companyId]
+    );
+
+    return res.json({ data: result.rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "get salary history failed" });
+  }
+};
