@@ -26,10 +26,6 @@ router.get(
   reportsController.getHighestPaid
 );
 
-//
-// 🔽 NEW EXPORT ROUTES
-//
-
 router.get(
   "/summary.csv",
   requireAuth,
@@ -70,6 +66,28 @@ router.get(
   requireAuth,
   requireRoles("admin", "manager"),
   reportsController.exportHighestPaidXlsx
+);
+
+// ── NEW: Full HR Report ──
+router.get(
+  "/preview",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.getPreview
+);
+
+router.get(
+  "/export/excel",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.exportExcel
+);
+
+router.get(
+  "/export/pdf",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.exportPDF
 );
 
 module.exports = router;
