@@ -13,14 +13,24 @@ exports.getAccounts = async (req, res) => {
   }
 };
 
-// POST /api/accounting/journal/generate - STANDARD PAYROLL
+// POST /api/accounting/journal/generate - HANDLES BOTH STANDARD AND HOSPITALITY
 exports.generateJournal = async (req, res) => {
-  const { payroll_period_id } = req.body;
+  const { payroll_period_id, type = "standard", property_id } = req.body;
 
   if (!payroll_period_id) {
     return res
       .status(400)
       .json({ success: false, error: "payroll_period_id is required" });
+  }
+
+  // Validate type
+  if (!["standard", "hospitality"].includes(type)) {
+    return res
+      .status(400)
+      .json({
+        success: false,
+        error: 'type must be "standard" or "hospitality"',
+      });
   }
 
   try {
@@ -37,118 +47,7 @@ exports.generateJournal = async (req, res) => {
 
     const period = periodCheck.rows[0];
 
-    // Get payroll summary
-    const payrollData = await pool.query(
-      `
-            SELECT gross_salary, paye_tax, pension_employee, uif_employee, net_salary
-            FROM payroll_records 
-            WHERE payroll_period_id = $1
-        `,
-      [payroll_period_id]
-    );
-
-    if (payrollData.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, error: "No payroll data found" });
-    }
-
-    let totalGross = 0,
-      totalTax = 0,
-      totalPension = 0,
-      totalUIF = 0,
-      totalNet = 0;
-
-    payrollData.rows.forEach((row) => {
-      totalGross += parseFloat(row.gross_salary) || 0;
-      totalTax += parseFloat(row.paye_tax) || 0;
-      totalPension += parseFloat(row.pension_employee) || 0;
-      totalUIF += parseFloat(row.uif_employee) || 0;
-      totalNet += parseFloat(row.net_salary) || 0;
-    });
-
-    const journalLines = [
-      {
-        line: 1,
-        account_code: "6100",
-        account_name: "Salaries & Wages",
-        debit: totalGross,
-        credit: 0,
-      },
-      {
-        line: 2,
-        account_code: "2100",
-        account_name: "SARS PAYE Liability",
-        debit: 0,
-        credit: totalTax,
-      },
-      {
-        line: 3,
-        account_code: "2110",
-        account_name: "Pension Liability",
-        debit: 0,
-        credit: totalPension,
-      },
-      {
-        line: 4,
-        account_code: "2130",
-        account_name: "UIF Liability",
-        debit: 0,
-        credit: totalUIF,
-      },
-      {
-        line: 5,
-        account_code: "2150",
-        account_name: "Net Salaries Payable",
-        debit: 0,
-        credit: totalNet,
-      },
-    ];
-
-    res.json({
-      success: true,
-      data: {
-        journal_id: `JE-${payroll_period_id}`,
-        date: new Date().toISOString().split("T")[0],
-        period_start: period.period_start,
-        period_end: period.period_end,
-        reference: `PAYROLL-${payroll_period_id}`,
-        total_debits: totalGross,
-        total_credits: totalTax + totalPension + totalUIF + totalNet,
-        is_balanced: true,
-        lines: journalLines,
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-};
-
-// POST /api/accounting/journal/hospitality - HOSPITALITY PAYROLL (includes tips)
-exports.generateHospitalityJournal = async (req, res) => {
-  const { payroll_period_id, property_id } = req.body;
-
-  if (!payroll_period_id) {
-    return res
-      .status(400)
-      .json({ success: false, error: "payroll_period_id is required" });
-  }
-
-  try {
-    const periodCheck = await pool.query(
-      "SELECT id, period_start, period_end FROM payroll_periods WHERE id = $1",
-      [payroll_period_id]
-    );
-
-    if (periodCheck.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Payroll period not found" });
-    }
-
-    const period = periodCheck.rows[0];
-
-    // Get payroll with department breakdown
+    // Get payroll data with optional property filter
     let payrollQuery = `
             SELECT 
                 pr.gross_salary,
@@ -157,6 +56,7 @@ exports.generateHospitalityJournal = async (req, res) => {
                 pr.uif_employee,
                 pr.net_salary,
                 d.code as dept_code,
+                d.name as dept_name,
                 p.id as property_id,
                 p.name as property_name
             FROM payroll_records pr
@@ -182,16 +82,12 @@ exports.generateHospitalityJournal = async (req, res) => {
         .json({ success: false, error: "No payroll data found" });
     }
 
-    // Calculate totals by department
+    // Calculate standard totals
     let totalGross = 0,
       totalTax = 0,
       totalPension = 0,
       totalUIF = 0,
       totalNet = 0;
-    let totalTipsCash = 0,
-      totalTipsCard = 0,
-      totalServiceCharge = 0;
-
     const deptBreakdown = {};
 
     payrollData.rows.forEach((row) => {
@@ -201,59 +97,28 @@ exports.generateHospitalityJournal = async (req, res) => {
       totalUIF += parseFloat(row.uif_employee) || 0;
       totalNet += parseFloat(row.net_salary) || 0;
 
-      // Department breakdown for hospitality cost centers
+      // Department breakdown
       const dept = row.dept_code || "GENERAL";
       if (!deptBreakdown[dept]) {
-        deptBreakdown[dept] = { gross: 0, count: 0 };
+        deptBreakdown[dept] = {
+          name: row.dept_name || "General",
+          gross: 0,
+          count: 0,
+        };
       }
       deptBreakdown[dept].gross += parseFloat(row.gross_salary) || 0;
       deptBreakdown[dept].count += 1;
     });
 
-    // Get tips for this period
-    const tipsData = await pool.query(
-      `
-            SELECT 
-                SUM(tips_cash) as total_tips_cash,
-                SUM(tips_card) as total_tips_card
-            FROM employee_shifts
-            WHERE shift_date BETWEEN $1 AND $2
-        `,
-      [period.period_start, period.period_end]
-    );
-
-    if (tipsData.rows.length > 0) {
-      totalTipsCash = parseFloat(tipsData.rows[0].total_tips_cash) || 0;
-      totalTipsCard = parseFloat(tipsData.rows[0].total_tips_card) || 0;
-    }
-
-    // Get service charges
-    const serviceChargeData = await pool.query(
-      `
-            SELECT SUM(total_amount) as total_service_charge
-            FROM tip_pools
-            WHERE pool_type = 'service_charge'
-            AND period_start >= $1 AND period_end <= $2
-            ${property_id ? "AND property_id = $3" : ""}
-        `,
-      property_id
-        ? [period.period_start, period.period_end, property_id]
-        : [period.period_start, period.period_end]
-    );
-
-    totalServiceCharge =
-      parseFloat(serviceChargeData.rows[0]?.total_service_charge) || 0;
-
-    // Build journal lines (Hospitality version)
+    // Build base journal lines (standard)
     const journalLines = [
-      // Standard payroll lines
       {
         line: 1,
         account_code: "6100",
         account_name: "Salaries & Wages",
         debit: totalGross,
         credit: 0,
-        type: "standard",
+        category: "payroll",
       },
       {
         line: 2,
@@ -261,7 +126,7 @@ exports.generateHospitalityJournal = async (req, res) => {
         account_name: "SARS PAYE Liability",
         debit: 0,
         credit: totalTax,
-        type: "standard",
+        category: "payroll",
       },
       {
         line: 3,
@@ -269,7 +134,7 @@ exports.generateHospitalityJournal = async (req, res) => {
         account_name: "Pension Liability",
         debit: 0,
         credit: totalPension,
-        type: "standard",
+        category: "payroll",
       },
       {
         line: 4,
@@ -277,7 +142,7 @@ exports.generateHospitalityJournal = async (req, res) => {
         account_name: "UIF Liability",
         debit: 0,
         credit: totalUIF,
-        type: "standard",
+        category: "payroll",
       },
       {
         line: 5,
@@ -285,94 +150,136 @@ exports.generateHospitalityJournal = async (req, res) => {
         account_name: "Net Salaries Payable",
         debit: 0,
         credit: totalNet,
-        type: "standard",
+        category: "payroll",
       },
-
-      // Hospitality-specific lines (only if amounts exist)
-      ...(totalTipsCash > 0
-        ? [
-            {
-              line: 6,
-              account_code: "6210",
-              account_name: "Tips Collected - Cash",
-              debit: 0,
-              credit: totalTipsCash,
-              type: "hospitality",
-            },
-          ]
-        : []),
-      ...(totalTipsCard > 0
-        ? [
-            {
-              line: 7,
-              account_code: "6215",
-              account_name: "Tips Collected - Card",
-              debit: 0,
-              credit: totalTipsCard,
-              type: "hospitality",
-            },
-          ]
-        : []),
-      ...(totalServiceCharge > 0
-        ? [
-            {
-              line: 8,
-              account_code: "6200",
-              account_name: "Service Charges Collected",
-              debit: 0,
-              credit: totalServiceCharge,
-              type: "hospitality",
-            },
-          ]
-        : []),
     ];
 
-    res.json({
+    let hospitalityData = null;
+    let totalCredits = totalTax + totalPension + totalUIF + totalNet;
+
+    // IF HOSPITALITY: Add tips and service charges
+    if (type === "hospitality") {
+      // Get tips from shifts
+      const tipsResult = await pool.query(
+        `
+                SELECT 
+                    COALESCE(SUM(tips_cash), 0) as total_tips_cash,
+                    COALESCE(SUM(tips_card), 0) as total_tips_card
+                FROM employee_shifts
+                WHERE shift_date BETWEEN $1 AND $2
+                ${
+                  property_id
+                    ? "AND employee_id IN (SELECT employee_id FROM employee_properties WHERE property_id = $3)"
+                    : ""
+                }
+            `,
+        property_id
+          ? [period.period_start, period.period_end, property_id]
+          : [period.period_start, period.period_end]
+      );
+
+      const totalTipsCash = parseFloat(tipsResult.rows[0].total_tips_cash) || 0;
+      const totalTipsCard = parseFloat(tipsResult.rows[0].total_tips_card) || 0;
+
+      // Get service charges
+      const serviceChargeResult = await pool.query(
+        `
+                SELECT COALESCE(SUM(total_amount), 0) as total_service_charge
+                FROM tip_pools
+                WHERE pool_type = 'service_charge'
+                AND period_start >= $1 AND period_end <= $2
+                ${property_id ? "AND property_id = $3" : ""}
+            `,
+        property_id
+          ? [period.period_start, period.period_end, property_id]
+          : [period.period_start, period.period_end]
+      );
+
+      const totalServiceCharge =
+        parseFloat(serviceChargeResult.rows[0].total_service_charge) || 0;
+
+      // Add hospitality lines
+      if (totalTipsCash > 0) {
+        journalLines.push({
+          line: 6,
+          account_code: "6210",
+          account_name: "Tips Collected - Cash",
+          debit: 0,
+          credit: totalTipsCash,
+          category: "hospitality",
+        });
+      }
+      if (totalTipsCard > 0) {
+        journalLines.push({
+          line: 7,
+          account_code: "6215",
+          account_name: "Tips Collected - Card",
+          debit: 0,
+          credit: totalTipsCard,
+          category: "hospitality",
+        });
+      }
+      if (totalServiceCharge > 0) {
+        journalLines.push({
+          line: 8,
+          account_code: "6200",
+          account_name: "Service Charges Collected",
+          debit: 0,
+          credit: totalServiceCharge,
+          category: "hospitality",
+        });
+      }
+
+      hospitalityData = {
+        tips_cash: totalTipsCash,
+        tips_card: totalTipsCard,
+        service_charge: totalServiceCharge,
+        total_hospitality_liabilities:
+          totalTipsCash + totalTipsCard + totalServiceCharge,
+      };
+
+      totalCredits += totalTipsCash + totalTipsCard + totalServiceCharge;
+    }
+
+    // Build response
+    const response = {
       success: true,
       data: {
-        journal_id: `JE-HOSP-${payroll_period_id}`,
+        journal_id: `JE-${type.toUpperCase()}-${payroll_period_id}`,
         date: new Date().toISOString().split("T")[0],
         period_start: period.period_start,
         period_end: period.period_end,
-        reference: `PAYROLL-HOSP-${payroll_period_id}`,
+        reference: `PAYROLL-${type.toUpperCase()}-${payroll_period_id}`,
+        type: type,
         property_id: property_id || null,
         total_debits: totalGross,
-        total_credits:
-          totalTax +
-          totalPension +
-          totalUIF +
-          totalNet +
-          totalTipsCash +
-          totalTipsCard +
-          totalServiceCharge,
-        is_balanced: true,
+        total_credits: totalCredits,
+        is_balanced: Math.abs(totalGross - totalCredits) < 0.01,
         summary: {
-          standard: {
+          payroll: {
             gross: totalGross,
             tax: totalTax,
             pension: totalPension,
             uif: totalUIF,
             net: totalNet,
           },
-          hospitality: {
-            tips_cash: totalTipsCash,
-            tips_card: totalTipsCard,
-            service_charge: totalServiceCharge,
-          },
+          ...(hospitalityData && { hospitality: hospitalityData }),
         },
         department_breakdown: deptBreakdown,
         lines: journalLines,
       },
-    });
+    };
+
+    res.json(response);
   } catch (err) {
+    console.error("Journal generation error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 };
 
 // GET /api/accounting/export/:format
 exports.exportJournal = async (req, res) => {
-  const { format, payroll_period_id, type } = req.query;
-  const isHospitality = type === "hospitality";
+  const { format, payroll_period_id, type = "standard" } = req.query;
 
   try {
     const result = await pool.query(
@@ -402,9 +309,7 @@ exports.exportJournal = async (req, res) => {
     if (format === "csv") {
       let csv = "Date,Reference,Account Code,Account Name,Debit,Credit\n";
       const date = row.period_end.toISOString().split("T")[0];
-      const ref = isHospitality
-        ? `HOSP-${payroll_period_id}`
-        : `PAYROLL-${payroll_period_id}`;
+      const ref = `PAYROLL-${type}-${payroll_period_id}`;
 
       // Standard lines
       csv += `${date},${ref},6100,Salaries & Wages,${row.total_gross},0\n`;
@@ -413,8 +318,8 @@ exports.exportJournal = async (req, res) => {
       csv += `${date},${ref},2130,UIF Liability,0,${row.total_uif}\n`;
       csv += `${date},${ref},2150,Net Salaries Payable,0,${row.total_net}\n`;
 
-      // Hospitality lines (if requested)
-      if (isHospitality) {
+      // Hospitality lines
+      if (type === "hospitality") {
         csv += `${date},${ref},6210,Tips Collected - Cash,0,0\n`;
         csv += `${date},${ref},6215,Tips Collected - Card,0,0\n`;
         csv += `${date},${ref},6200,Service Charges Collected,0,0\n`;

@@ -5,14 +5,8 @@ const accountingController = require("../controllers/accounting.controller");
 // Chart of Accounts
 router.get("/accounts", accountingController.getAccounts);
 
-// Journal Entries - STANDARD
+// Journal Generation (handles both standard and hospitality)
 router.post("/journal/generate", accountingController.generateJournal);
-
-// Journal Entries - HOSPITALITY (includes tips, service charges)
-router.post(
-  "/journal/hospitality",
-  accountingController.generateHospitalityJournal
-);
 
 // Export
 router.get("/export/:format", accountingController.exportJournal);
