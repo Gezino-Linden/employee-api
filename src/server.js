@@ -15,6 +15,7 @@ const attendanceRoutes = require("./routes/attendance.routes");
 const emp201Routes = require("./routes/emp201.routes");
 const ui19Routes = require("./routes/ui19.routes");
 const irp5Routes = require("./routes/irp5.routes");
+const analyticsRoutes = require("./routes/analytics.routes");
 
 const db = require("./db");
 const { requireAuth } = require("./middleware");
@@ -135,6 +136,7 @@ app.use("/api/attendance", attendanceRoutes);
 app.use("/api/emp201", emp201Routes);
 app.use("/api/ui19", ui19Routes);
 app.use("/api/irp5", irp5Routes);
+app.use("/api/analytics", analyticsRoutes);
 
 // 404
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
