@@ -58,9 +58,11 @@ exports.getCertificates = async (req, res) => {
     const taxYear = req.query.tax_year || new Date().getFullYear();
 
     const result = await db.query(
-      `SELECT * FROM irp5_certificates
-       WHERE company_id = $1 AND tax_year = $2
-       ORDER BY employee_name`,
+      `SELECT c.*, e.department, e.position
+       FROM irp5_certificates c
+       JOIN employees e ON e.id = c.employee_id
+       WHERE c.company_id = $1 AND c.tax_year = $2
+       ORDER BY c.employee_name`,
       [companyId, taxYear.toString()]
     );
 
