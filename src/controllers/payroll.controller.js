@@ -2,7 +2,6 @@
 const PDFDocument = require("pdfkit");
 const db = require("../db");
 
-
 // =====================================================
 // VALIDATION HELPERS
 // =====================================================
@@ -32,13 +31,13 @@ function validateStatus(status) {
   return VALID_STATUSES.includes(status);
 }
 
-// Simplified South African tax calculation (2024 tax brackets)
-// South African PAYE Tax Calculation (2024/2025)
+// =====================================================
+// SOUTH AFRICAN PAYE TAX CALCULATION (2024/2025)
+// =====================================================
 function calculateTax(grossPay, age = 30) {
   const annualGross = grossPay * 12;
   let annualTax;
 
-  // Step 1: Calculate tax from brackets
   if (annualGross <= 237100) {
     annualTax = annualGross * 0.18;
   } else if (annualGross <= 370500) {
@@ -55,34 +54,28 @@ function calculateTax(grossPay, age = 30) {
     annualTax = 644489 + (annualGross - 1817000) * 0.45;
   }
 
-  // Step 2: Subtract rebates (2024/2025 SARS values)
-  const PRIMARY_REBATE   = 17235; // Under 65
-  const SECONDARY_REBATE = 9444;  // 65–74
-  const TERTIARY_REBATE  = 3145;  // 75+
+  const PRIMARY_REBATE = 17235;
+  const SECONDARY_REBATE = 9444;
+  const TERTIARY_REBATE = 3145;
 
   if (age < 65) {
     annualTax -= PRIMARY_REBATE;
   } else if (age < 75) {
-    annualTax -= (PRIMARY_REBATE + SECONDARY_REBATE);
+    annualTax -= PRIMARY_REBATE + SECONDARY_REBATE;
   } else {
-    annualTax -= (PRIMARY_REBATE + SECONDARY_REBATE + TERTIARY_REBATE);
+    annualTax -= PRIMARY_REBATE + SECONDARY_REBATE + TERTIARY_REBATE;
   }
 
-  // Step 3: Tax threshold check — below threshold = R0 tax
-  // 2024/2025 thresholds
   const TAX_THRESHOLD_UNDER_65 = 95750;
   const TAX_THRESHOLD_65_TO_74 = 148217;
-  const TAX_THRESHOLD_75_PLUS  = 165689;
+  const TAX_THRESHOLD_75_PLUS = 165689;
 
   let threshold = TAX_THRESHOLD_UNDER_65;
   if (age >= 75) threshold = TAX_THRESHOLD_75_PLUS;
   else if (age >= 65) threshold = TAX_THRESHOLD_65_TO_74;
 
-  if (annualGross <= threshold) {
-    return 0;
-  }
+  if (annualGross <= threshold) return 0;
 
-  // Monthly tax, never negative
   return Math.max(0, annualTax / 12);
 }
 
@@ -91,12 +84,8 @@ function calculateTax(grossPay, age = 30) {
 // =====================================================
 exports.getPayrollSummary = async (req, res) => {
   try {
-    console.log("=== getPayrollSummary called ===");
-    console.log("req.user:", req.user);
-
     const companyId = req.user?.company_id;
     if (!companyId) {
-      console.error("No company_id in req.user");
       return res
         .status(400)
         .json({ error: "Company ID not found in user session" });
@@ -105,17 +94,13 @@ exports.getPayrollSummary = async (req, res) => {
     const month = toInt(req.query.month, new Date().getMonth() + 1);
     const year = toInt(req.query.year, new Date().getFullYear());
 
-    console.log("companyId:", companyId, "month:", month, "year:", year);
-
-    if (!validateMonth(month)) {
+    if (!validateMonth(month))
       return res.status(400).json({ error: "Invalid month (1-12)" });
-    }
-    if (!validateYear(year)) {
+    if (!validateYear(year))
       return res.status(400).json({ error: "Invalid year" });
-    }
 
     const result = await db.query(
-      `SELECT 
+      `SELECT
         CAST(COUNT(*) AS INTEGER) as total_employees,
         COALESCE(SUM(gross_pay), 0) as total_gross,
         COALESCE(SUM(total_deductions), 0) as total_deductions,
@@ -129,17 +114,12 @@ exports.getPayrollSummary = async (req, res) => {
       [companyId, month, year]
     );
 
-    console.log("Query result:", result.rows[0]);
-
     return res.json(result.rows[0]);
   } catch (err) {
-    console.error("=== ERROR in getPayrollSummary ===");
-    console.error("Error message:", err.message);
-    console.error("Error stack:", err.stack);
-    return res.status(500).json({
-      error: "Failed to fetch payroll summary",
-      details: err.message,
-    });
+    console.error("ERROR in getPayrollSummary:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to fetch payroll summary", details: err.message });
   }
 };
 
@@ -149,25 +129,21 @@ exports.getPayrollSummary = async (req, res) => {
 exports.getPayrollRecords = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
-    if (!companyId) {
+    if (!companyId)
       return res.status(400).json({ error: "Company ID not found" });
-    }
 
     const month = toInt(req.query.month, new Date().getMonth() + 1);
     const year = toInt(req.query.year, new Date().getFullYear());
     const status = req.query.status;
 
-    if (!validateMonth(month)) {
+    if (!validateMonth(month))
       return res.status(400).json({ error: "Invalid month (1-12)" });
-    }
-    if (!validateYear(year)) {
+    if (!validateYear(year))
       return res.status(400).json({ error: "Invalid year" });
-    }
     if (status && !validateStatus(status)) {
-      return res.status(400).json({
-        error: "Invalid status",
-        valid_statuses: VALID_STATUSES,
-      });
+      return res
+        .status(400)
+        .json({ error: "Invalid status", valid_statuses: VALID_STATUSES });
     }
 
     const page = toInt(req.query.page, 1);
@@ -175,35 +151,15 @@ exports.getPayrollRecords = async (req, res) => {
     const offset = (page - 1) * perPage;
 
     let query = `
-      SELECT 
-        pr.id,
-        pr.employee_id,
-        e.first_name,
-        e.last_name,
-        e.email,
-        e.department,
-        e.position,
-        pr.month,
-        pr.year,
-        pr.basic_salary,
-        pr.allowances,
-        pr.bonuses,
-        pr.overtime,
-        pr.gross_pay,
-        pr.tax,
-        pr.uif,
-        pr.pension,
-        pr.medical_aid,
-        pr.other_deductions,
-        pr.total_deductions,
-        pr.net_pay,
-        pr.status,
-        pr.payment_method,
-        pr.payment_date,
-        pr.payment_reference,
-        pr.notes,
-        pr.created_at,
-        pr.updated_at
+      SELECT
+        pr.id, pr.employee_id,
+        e.first_name, e.last_name, e.email, e.department, e.position,
+        pr.month, pr.year,
+        pr.basic_salary, pr.allowances, pr.bonuses, pr.overtime,
+        pr.gross_pay, pr.tax, pr.uif, pr.pension, pr.medical_aid,
+        pr.other_deductions, pr.total_deductions, pr.net_pay,
+        pr.status, pr.payment_method, pr.payment_date, pr.payment_reference,
+        pr.notes, pr.created_at, pr.updated_at
       FROM payroll_records pr
       JOIN employees e ON pr.employee_id = e.id
       WHERE pr.company_id = $1 AND pr.month = $2 AND pr.year = $3
@@ -219,42 +175,20 @@ exports.getPayrollRecords = async (req, res) => {
     }
 
     query += ` ORDER BY e.last_name, e.first_name`;
-
     paramIndex++;
     query += ` LIMIT $${paramIndex}`;
     params.push(perPage);
-
     paramIndex++;
     query += ` OFFSET $${paramIndex}`;
     params.push(offset);
 
     const result = await db.query(query, params);
-
-    let countQuery = `
-      SELECT CAST(COUNT(*) AS INTEGER) as total 
-      FROM payroll_records pr
-      JOIN employees e ON pr.employee_id = e.id
-      WHERE pr.company_id = $1 AND pr.month = $2 AND pr.year = $3
-    `;
-    const countParams = [companyId, month, year];
-
-    if (status) {
-      countQuery += ` AND pr.status = $4`;
-      countParams.push(status);
-    }
-
-    const countResult = await db.query(countQuery, countParams);
-
-    // NOTE: frontend expects an array, not paginated object
-    // Return flat array to stay compatible with existing frontend
     return res.json(result.rows);
   } catch (err) {
-    console.error("=== ERROR in getPayrollRecords ===");
-    console.error(err);
-    return res.status(500).json({
-      error: "Failed to fetch payroll records",
-      details: err.message,
-    });
+    console.error("ERROR in getPayrollRecords:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to fetch payroll records", details: err.message });
   }
 };
 
@@ -264,25 +198,20 @@ exports.getPayrollRecords = async (req, res) => {
 exports.initializePayrollPeriod = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
-    if (!companyId) {
+    if (!companyId)
       return res.status(400).json({ error: "Company ID not found" });
-    }
 
     const { month, year } = req.body;
-
-    if (!month || !year) {
+    if (!month || !year)
       return res.status(400).json({ error: "Month and year are required" });
-    }
 
     const monthInt = toInt(month, 0);
     const yearInt = toInt(year, 0);
 
-    if (!validateMonth(monthInt)) {
+    if (!validateMonth(monthInt))
       return res.status(400).json({ error: "Invalid month (1-12)" });
-    }
-    if (!validateYear(yearInt)) {
+    if (!validateYear(yearInt))
       return res.status(400).json({ error: "Invalid year" });
-    }
 
     const result = await db.query(
       `SELECT initialize_payroll_period($1, $2, $3) as count`,
@@ -294,12 +223,13 @@ exports.initializePayrollPeriod = async (req, res) => {
       count: result.rows[0].count,
     });
   } catch (err) {
-    console.error("=== ERROR in initializePayrollPeriod ===");
-    console.error(err);
-    return res.status(500).json({
-      error: "Failed to initialize payroll period",
-      details: err.message,
-    });
+    console.error("ERROR in initializePayrollPeriod:", err);
+    return res
+      .status(500)
+      .json({
+        error: "Failed to initialize payroll period",
+        details: err.message,
+      });
   }
 };
 
@@ -310,11 +240,12 @@ exports.updatePayrollRecord = async (req, res) => {
   let client;
   try {
     const companyId = req.user?.company_id;
-    if (!companyId) {
+    if (!companyId)
       return res.status(400).json({ error: "Company ID not found" });
-    }
 
     const recordId = toInt(req.params.id, 0);
+    if (!recordId) return res.status(400).json({ error: "Invalid record ID" });
+
     const {
       allowances,
       bonuses,
@@ -323,10 +254,6 @@ exports.updatePayrollRecord = async (req, res) => {
       other_deductions,
       notes,
     } = req.body;
-
-    if (!recordId) {
-      return res.status(400).json({ error: "Invalid record ID" });
-    }
 
     client = await db.connect();
     await client.query("BEGIN");
@@ -392,17 +319,11 @@ exports.updatePayrollRecord = async (req, res) => {
 
     const result = await client.query(
       `UPDATE payroll_records
-       SET 
-         allowances = $1,
-         bonuses = $2,
-         overtime = $3,
-         medical_aid = $4,
-         other_deductions = $5,
+       SET
+         allowances = $1, bonuses = $2, overtime = $3,
+         medical_aid = $4, other_deductions = $5,
          notes = COALESCE($6, notes),
-         gross_pay = $7,
-         tax = $8,
-         total_deductions = $9,
-         net_pay = $10,
+         gross_pay = $7, tax = $8, total_deductions = $9, net_pay = $10,
          updated_at = NOW()
        WHERE id = $11
        RETURNING *`,
@@ -422,7 +343,7 @@ exports.updatePayrollRecord = async (req, res) => {
     );
 
     await client.query(
-      `INSERT INTO payroll_audit_log 
+      `INSERT INTO payroll_audit_log
        (payroll_record_id, changed_by, action, old_values, new_values, notes, created_at)
        VALUES ($1, $2, 'update', $3, $4, $5, NOW())`,
       [
@@ -445,16 +366,13 @@ exports.updatePayrollRecord = async (req, res) => {
     );
 
     await client.query("COMMIT");
-
     return res.json(result.rows[0]);
   } catch (err) {
     if (client) await client.query("ROLLBACK");
-    console.error("=== ERROR in updatePayrollRecord ===");
-    console.error(err);
-    return res.status(500).json({
-      error: "Failed to update payroll record",
-      details: err.message,
-    });
+    console.error("ERROR in updatePayrollRecord:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to update payroll record", details: err.message });
   } finally {
     if (client) client.release();
   }
@@ -467,25 +385,20 @@ exports.processPayroll = async (req, res) => {
   let client;
   try {
     const companyId = req.user?.company_id;
-    if (!companyId) {
+    if (!companyId)
       return res.status(400).json({ error: "Company ID not found" });
-    }
 
     const { employee_ids, month, year } = req.body;
-
-    if (!month || !year) {
+    if (!month || !year)
       return res.status(400).json({ error: "Month and year are required" });
-    }
 
     const monthInt = toInt(month, 0);
     const yearInt = toInt(year, 0);
 
-    if (!validateMonth(monthInt)) {
+    if (!validateMonth(monthInt))
       return res.status(400).json({ error: "Invalid month (1-12)" });
-    }
-    if (!validateYear(yearInt)) {
+    if (!validateYear(yearInt))
       return res.status(400).json({ error: "Invalid year" });
-    }
 
     if (
       !employee_ids ||
@@ -508,7 +421,7 @@ exports.processPayroll = async (req, res) => {
     const result = await client.query(
       `UPDATE payroll_records
        SET status = 'processed', updated_at = NOW()
-       WHERE company_id = $1 AND month = $2 AND year = $3 
+       WHERE company_id = $1 AND month = $2 AND year = $3
          AND employee_id = ANY($4) AND status = 'draft'
        RETURNING id, employee_id`,
       [companyId, monthInt, yearInt, validIds]
@@ -523,7 +436,6 @@ exports.processPayroll = async (req, res) => {
     }
 
     await client.query("COMMIT");
-
     return res.json({
       message: `Processed ${result.rows.length} payroll records`,
       count: result.rows.length,
@@ -531,12 +443,10 @@ exports.processPayroll = async (req, res) => {
     });
   } catch (err) {
     if (client) await client.query("ROLLBACK");
-    console.error("=== ERROR in processPayroll ===");
-    console.error(err);
-    return res.status(500).json({
-      error: "Failed to process payroll",
-      details: err.message,
-    });
+    console.error("ERROR in processPayroll:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to process payroll", details: err.message });
   } finally {
     if (client) client.release();
   }
@@ -549,29 +459,26 @@ exports.markAsPaid = async (req, res) => {
   let client;
   try {
     const companyId = req.user?.company_id;
-    if (!companyId) {
+    if (!companyId)
       return res.status(400).json({ error: "Company ID not found" });
-    }
 
     const recordId = toInt(req.params.id, 0);
+    if (!recordId) return res.status(400).json({ error: "Invalid record ID" });
+
     const { payment_method, payment_date, payment_reference } = req.body;
 
-    if (!recordId) {
-      return res.status(400).json({ error: "Invalid record ID" });
-    }
-
     if (payment_method && !validatePaymentMethod(payment_method)) {
-      return res.status(400).json({
-        error: "Invalid payment method",
-        valid_methods: VALID_PAYMENT_METHODS,
-      });
+      return res
+        .status(400)
+        .json({
+          error: "Invalid payment method",
+          valid_methods: VALID_PAYMENT_METHODS,
+        });
     }
-
     if (payment_date && isNaN(Date.parse(payment_date))) {
-      return res.status(400).json({
-        error: "Invalid payment date format",
-        format: "YYYY-MM-DD",
-      });
+      return res
+        .status(400)
+        .json({ error: "Invalid payment date format", format: "YYYY-MM-DD" });
     }
 
     client = await db.connect();
@@ -579,7 +486,7 @@ exports.markAsPaid = async (req, res) => {
 
     const result = await client.query(
       `UPDATE payroll_records
-       SET 
+       SET
          status = 'paid',
          payment_method = COALESCE($1, payment_method),
          payment_date = COALESCE($2, payment_date),
@@ -596,12 +503,10 @@ exports.markAsPaid = async (req, res) => {
         `SELECT status FROM payroll_records WHERE id = $1 AND company_id = $2`,
         [recordId, companyId]
       );
-      if (check.rows.length === 0) {
+      if (check.rows.length === 0)
         return res.status(404).json({ error: "Payroll record not found" });
-      }
-      if (check.rows[0].status === "paid") {
+      if (check.rows[0].status === "paid")
         return res.status(409).json({ error: "Record already marked as paid" });
-      }
       return res.status(400).json({ error: "Unable to mark as paid" });
     }
 
@@ -612,23 +517,20 @@ exports.markAsPaid = async (req, res) => {
     );
 
     await client.query("COMMIT");
-
     return res.json(result.rows[0]);
   } catch (err) {
     if (client) await client.query("ROLLBACK");
-    console.error("=== ERROR in markAsPaid ===");
-    console.error(err);
-    return res.status(500).json({
-      error: "Failed to mark as paid",
-      details: err.message,
-    });
+    console.error("ERROR in markAsPaid:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to mark as paid", details: err.message });
   } finally {
     if (client) client.release();
   }
 };
 
 // =====================================================
-// GENERATE PAYSLIP
+// GENERATE PAYSLIP (PDF)
 // =====================================================
 exports.generatePayslip = async (req, res) => {
   try {
@@ -636,18 +538,14 @@ exports.generatePayslip = async (req, res) => {
     const userRole = req.user?.role;
     const userEmployeeId = req.user?.employee_id;
 
-    if (!companyId) {
+    if (!companyId)
       return res.status(400).json({ error: "Company ID not found" });
-    }
 
     const recordId = toInt(req.params.id, 0);
-
-    if (!recordId) {
-      return res.status(400).json({ error: "Invalid record ID" });
-    }
+    if (!recordId) return res.status(400).json({ error: "Invalid record ID" });
 
     const result = await db.query(
-      `SELECT 
+      `SELECT
         pr.*,
         e.first_name, e.last_name, e.email, e.position, e.department, e.id as emp_id,
         c.name as company_name, c.currency_code
@@ -658,9 +556,8 @@ exports.generatePayslip = async (req, res) => {
       [recordId, companyId]
     );
 
-    if (result.rows.length === 0) {
+    if (result.rows.length === 0)
       return res.status(404).json({ error: "Payroll record not found" });
-    }
 
     const record = result.rows[0];
 
@@ -677,30 +574,19 @@ exports.generatePayslip = async (req, res) => {
     const currency = record.currency_code || "ZAR";
     const currencySymbol = currency === "ZAR" ? "R" : "$";
 
-    // Create PDF
     const doc = new PDFDocument();
-
-    // Set PDF headers
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="payslip-${record.last_name}-${record.month}-${record.year}.pdf"`
     );
-
-    // Pipe PDF to response
     doc.pipe(res);
 
-    // === PDF CONTENT ===
-
-    // Header
     doc.fontSize(24).text("PAYSLIP", { align: "center" });
     doc.moveDown(0.5);
-
-    // Company Info
     doc.fontSize(14).text(record.company_name, { align: "center" });
     doc.moveDown();
 
-    // Employee Details
     doc.fontSize(12);
     doc.text(`Employee: ${record.first_name} ${record.last_name}`);
     doc.text(`Position: ${record.position || "N/A"}`);
@@ -708,11 +594,9 @@ exports.generatePayslip = async (req, res) => {
     doc.text(`Period: ${record.month}/${record.year}`);
     doc.moveDown();
 
-    // Line separator
     doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
     doc.moveDown();
 
-    // EARNINGS
     doc.fontSize(14).text("EARNINGS", { underline: true });
     doc.moveDown(0.5);
     doc.fontSize(12);
@@ -739,20 +623,15 @@ exports.generatePayslip = async (req, res) => {
     });
 
     doc.moveDown();
-    doc
-      .fontSize(13)
-      .text(`GROSS PAY:`, 50, doc.y, { continued: true, bold: true });
+    doc.fontSize(13).text(`GROSS PAY:`, 50, doc.y, { continued: true });
     doc.text(`${currencySymbol} ${parseFloat(record.gross_pay).toFixed(2)}`, {
       align: "right",
-      bold: true,
     });
     doc.moveDown();
 
-    // Line separator
     doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
     doc.moveDown();
 
-    // DEDUCTIONS
     doc.fontSize(14).text("DEDUCTIONS", { underline: true });
     doc.moveDown(0.5);
     doc.fontSize(12);
@@ -784,67 +663,42 @@ exports.generatePayslip = async (req, res) => {
     );
 
     doc.moveDown();
-    doc
-      .fontSize(13)
-      .text(`TOTAL DEDUCTIONS:`, 50, doc.y, { continued: true, bold: true });
+    doc.fontSize(13).text(`TOTAL DEDUCTIONS:`, 50, doc.y, { continued: true });
     doc.text(
       `${currencySymbol} ${parseFloat(record.total_deductions).toFixed(2)}`,
-      { align: "right", bold: true }
+      { align: "right" }
     );
     doc.moveDown();
 
-    // Line separator
     doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
     doc.moveDown();
 
-    // NET PAY
-    doc
-      .fontSize(16)
-      .text(`NET PAY:`, 50, doc.y, { continued: true, bold: true });
+    doc.fontSize(16).text(`NET PAY:`, 50, doc.y, { continued: true });
     doc.text(`${currencySymbol} ${parseFloat(record.net_pay).toFixed(2)}`, {
       align: "right",
-      bold: true,
     });
     doc.moveDown(2);
 
-    // Payment Info
     doc.fontSize(11);
     doc.text(`Payment Status: ${record.status.toUpperCase()}`);
-
-    if (record.payment_date) {
-      doc.text(`Payment Date: ${record.payment_date}`);
-    }
-
-    if (record.payment_method) {
+    if (record.payment_date) doc.text(`Payment Date: ${record.payment_date}`);
+    if (record.payment_method)
       doc.text(`Payment Method: ${record.payment_method}`);
-    }
-
-    if (record.payment_reference) {
+    if (record.payment_reference)
       doc.text(`Reference: ${record.payment_reference}`);
-    }
 
-    // Footer
     doc.moveDown(2);
     doc
       .fontSize(10)
-      .text("This is a computer-generated payslip.", {
-        align: "center",
-        italics: true,
-      });
-    doc.text(`Generated: ${new Date().toLocaleString()}`, {
-      align: "center",
-      italics: true,
-    });
+      .text("This is a computer-generated payslip.", { align: "center" });
+    doc.text(`Generated: ${new Date().toLocaleString()}`, { align: "center" });
 
-    // Finalize PDF
     doc.end();
   } catch (err) {
-    console.error("=== ERROR in generatePayslip ===");
-    console.error(err);
-    return res.status(500).json({
-      error: "Failed to generate payslip",
-      details: err.message,
-    });
+    console.error("ERROR in generatePayslip:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to generate payslip", details: err.message });
   }
 };
 
@@ -854,9 +708,8 @@ exports.generatePayslip = async (req, res) => {
 exports.getPayrollHistory = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
-    if (!companyId) {
+    if (!companyId)
       return res.status(400).json({ error: "Company ID not found" });
-    }
 
     const employeeId = toInt(req.query.employee_id, 0);
     const page = toInt(req.query.page, 1);
@@ -864,7 +717,7 @@ exports.getPayrollHistory = async (req, res) => {
     const offset = (page - 1) * perPage;
 
     let query = `
-      SELECT 
+      SELECT
         pr.id, pr.month, pr.year, pr.gross_pay, pr.total_deductions, pr.net_pay, pr.status,
         pr.payment_method, pr.payment_date,
         e.first_name, e.last_name, e.id as emp_id
@@ -893,13 +746,12 @@ exports.getPayrollHistory = async (req, res) => {
     const result = await db.query(query, params);
 
     let countQuery = `
-      SELECT CAST(COUNT(*) AS INTEGER) as total 
+      SELECT CAST(COUNT(*) AS INTEGER) as total
       FROM payroll_records pr
       JOIN employees e ON pr.employee_id = e.id
       WHERE pr.company_id = $1
     `;
     const countParams = [companyId];
-
     if (employeeId > 0) {
       countQuery += ` AND pr.employee_id = $2`;
       countParams.push(employeeId);
@@ -910,162 +762,117 @@ exports.getPayrollHistory = async (req, res) => {
     return res.json({
       data: result.rows,
       pagination: {
-        page: page,
+        page,
         per_page: perPage,
         total: countResult.rows[0].total,
         total_pages: Math.ceil(countResult.rows[0].total / perPage),
       },
     });
   } catch (err) {
-    console.error("=== ERROR in getPayrollHistory ===");
-    console.error(err);
-    return res.status(500).json({
-      error: "Failed to fetch payroll history",
-      details: err.message,
-    });
+    console.error("ERROR in getPayrollHistory:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to fetch payroll history", details: err.message });
   }
 };
-// ADD THESE FUNCTIONS TO YOUR EXISTING payroll.controller.js
-// Place them at the bottom, replacing the stub calculateShiftPay function
 
 // =====================================================
 // SHIFT PAY CALCULATION HELPERS
 // =====================================================
 
-/**
- * Calculate night hours worked (18:00 - 06:00)
- * @param {Date|string} clockIn - Clock in timestamp
- * @param {Date|string} clockOut - Clock out timestamp
- * @returns {number} Hours worked during night period
- */
 function calculateNightHours(clockIn, clockOut) {
-  const NIGHT_START = 18; // 6 PM
-  const NIGHT_END = 6;    // 6 AM
-  
+  const NIGHT_START = 18;
+  const NIGHT_END = 6;
+
   const clockInDate = new Date(clockIn);
   const clockOutDate = new Date(clockOut);
-  
+
   let nightHours = 0;
   const totalHours = (clockOutDate - clockInDate) / (1000 * 60 * 60);
-  
-  // Loop through each hour worked
+
   for (let i = 0; i < Math.ceil(totalHours); i++) {
     const currentTime = new Date(clockInDate.getTime() + i * 60 * 60 * 1000);
     const hour = currentTime.getHours();
-    
-    // Check if hour is in night period
     if (hour >= NIGHT_START || hour < NIGHT_END) {
       nightHours++;
     }
   }
-  
+
   return Math.min(nightHours, totalHours);
 }
 
-/**
- * Check if a date is a South African public holiday
- * @param {Date|string} date - Date to check
- * @returns {Promise<boolean>} True if public holiday
- */
 async function checkPublicHoliday(date) {
   try {
-    // Public holidays for 2026 (hardcoded for now)
     const publicHolidays2026 = [
-      '2026-01-01', // New Year's Day
-      '2026-03-21', // Human Rights Day
-      '2026-04-10', // Good Friday
-      '2026-04-13', // Family Day
-      '2026-04-27', // Freedom Day
-      '2026-05-01', // Workers' Day
-      '2026-06-16', // Youth Day
-      '2026-08-09', // National Women's Day
-      '2026-09-24', // Heritage Day
-      '2026-12-16', // Day of Reconciliation
-      '2026-12-25', // Christmas Day
-      '2026-12-26', // Day of Goodwill
+      "2026-01-01",
+      "2026-03-21",
+      "2026-04-10",
+      "2026-04-13",
+      "2026-04-27",
+      "2026-05-01",
+      "2026-06-16",
+      "2026-08-09",
+      "2026-09-24",
+      "2026-12-16",
+      "2026-12-25",
+      "2026-12-26",
     ];
-    
-    const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+    const dateStr =
+      typeof date === "string" ? date : date.toISOString().split("T")[0];
     return publicHolidays2026.includes(dateStr);
   } catch (err) {
-    console.error('Error checking public holiday:', err);
+    console.error("Error checking public holiday:", err);
     return false;
   }
 }
 
-/**
- * Calculate shift pay with night differential, Sunday, and holiday premiums
- * South African Labour Law Compliance:
- * - Night work (18:00-06:00): +10% of hourly rate
- * - Sunday work: Double time (200%)
- * - Public holidays: Double time (200%)
- * 
- * @param {Object} employee - Employee object with hourly_rate
- * @param {Object} shift - Shift template with multiplier
- * @param {Object} attendance - Attendance record with clock times
- * @returns {Promise<Object>} Calculated pay breakdown
- */
 async function calculateShiftPay(employee, shift, attendance) {
   try {
-    // Base hourly rate
     let hourlyRate = employee.hourly_rate;
     if (!hourlyRate && employee.salary) {
-      // Calculate hourly rate from monthly salary (160 hours/month standard)
       hourlyRate = employee.salary / 160;
     }
-    
-    // Total hours worked
+
     const totalHours = attendance.total_hours || 8;
-    
-    // Calculate base pay
     let basePay = hourlyRate * totalHours;
-    
-    // Apply shift template multiplier (e.g., 1.5x for night shift premium)
+
     if (shift && shift.base_rate_multiplier) {
       basePay *= shift.base_rate_multiplier;
     }
-    
-    // Calculate night hours (18:00 - 06:00)
+
     let nightHours = 0;
     let nightPay = 0;
     if (attendance.clock_in && attendance.clock_out) {
-      nightHours = calculateNightHours(attendance.clock_in, attendance.clock_out);
-      
+      nightHours = calculateNightHours(
+        attendance.clock_in,
+        attendance.clock_out
+      );
       if (nightHours > 0) {
-        // SA Law: 10% premium for night work
-        nightPay = hourlyRate * nightHours * 0.10;
+        nightPay = hourlyRate * nightHours * 0.1;
       }
     }
-    
-    // Check for Sunday work
+
     const isSunday = new Date(attendance.date).getDay() === 0;
-    
-    // Check for public holiday
     const isPublicHoliday = await checkPublicHoliday(attendance.date);
-    
-    // Apply premium rates
+
     let premiumMultiplier = 1.0;
-    let premiumType = 'regular';
-    
+    let premiumType = "regular";
+
     if (isPublicHoliday) {
-      // SA Law: Public holidays = Double time (200%)
       premiumMultiplier = 2.0;
-      premiumType = 'public_holiday';
+      premiumType = "public_holiday";
     } else if (isSunday) {
-      // SA Law: Sunday work = Double time (200%)
       premiumMultiplier = 2.0;
-      premiumType = 'sunday';
+      premiumType = "sunday";
     }
-    
-    // Calculate final pay
+
     let shiftPremium = 0;
     if (premiumMultiplier > 1.0) {
       shiftPremium = basePay * (premiumMultiplier - 1.0);
     }
-    
+
     const totalPay = basePay + shiftPremium + nightPay;
-    
-    // Return detailed breakdown
+
     return {
       hourly_rate: parseFloat(hourlyRate.toFixed(2)),
       total_hours: parseFloat(totalHours.toFixed(2)),
@@ -1077,11 +884,10 @@ async function calculateShiftPay(employee, shift, attendance) {
       premium_multiplier: premiumMultiplier,
       is_sunday: isSunday,
       is_public_holiday: isPublicHoliday,
-      total_pay: parseFloat(totalPay.toFixed(2))
+      total_pay: parseFloat(totalPay.toFixed(2)),
     };
   } catch (err) {
-    console.error('Error calculating shift pay:', err);
-    // Return safe fallback
+    console.error("Error calculating shift pay:", err);
     return {
       hourly_rate: employee.hourly_rate || 0,
       total_hours: attendance.total_hours || 0,
@@ -1089,39 +895,24 @@ async function calculateShiftPay(employee, shift, attendance) {
       base_pay: 0,
       night_pay: 0,
       shift_premium: 0,
-      premium_type: 'error',
+      premium_type: "error",
       premium_multiplier: 1.0,
       is_sunday: false,
       is_public_holiday: false,
       total_pay: 0,
-      error: err.message
+      error: err.message,
     };
   }
 }
 
-/**
- * Process shifts for payroll integration
- * Call this when generating payroll to include shift-based earnings
- * 
- * @param {number} companyId - Company ID
- * @param {number} employeeId - Employee ID
- * @param {number} month - Month number (1-12)
- * @param {number} year - Year
- * @returns {Promise<Object>} Total shift earnings for the period
- */
 async function calculateMonthlyShiftPay(companyId, employeeId, month, year) {
   try {
-    // Get all completed shifts for the employee in this period
     const shifts = await db.query(
-      `SELECT 
+      `SELECT
         es.*,
-        st.base_rate_multiplier,
-        st.is_night_shift,
-        ar.clock_in,
-        ar.clock_out,
-        ar.total_hours,
-        e.hourly_rate,
-        e.salary
+        st.base_rate_multiplier, st.is_night_shift,
+        ar.clock_in, ar.clock_out, ar.total_hours,
+        e.hourly_rate, e.salary
       FROM employee_shifts es
       JOIN shift_templates st ON es.shift_template_id = st.id
       LEFT JOIN attendance_records ar ON es.attendance_record_id = ar.id
@@ -1133,40 +924,31 @@ async function calculateMonthlyShiftPay(companyId, employeeId, month, year) {
         AND es.status = 'completed'`,
       [companyId, employeeId, month, year]
     );
-    
+
     let totalBasePay = 0;
     let totalNightPay = 0;
     let totalShiftPremium = 0;
     let totalHours = 0;
     let totalNightHours = 0;
-    
-    // Calculate pay for each shift
+
     for (const shift of shifts.rows) {
-      const employee = {
-        hourly_rate: shift.hourly_rate,
-        salary: shift.salary
-      };
-      
-      const shiftTemplate = {
-        base_rate_multiplier: shift.base_rate_multiplier
-      };
-      
-      const attendance = {
-        date: shift.shift_date,
-        clock_in: shift.clock_in,
-        clock_out: shift.clock_out,
-        total_hours: shift.actual_hours_worked || shift.total_hours
-      };
-      
-      const payBreakdown = await calculateShiftPay(employee, shiftTemplate, attendance);
-      
+      const payBreakdown = await calculateShiftPay(
+        { hourly_rate: shift.hourly_rate, salary: shift.salary },
+        { base_rate_multiplier: shift.base_rate_multiplier },
+        {
+          date: shift.shift_date,
+          clock_in: shift.clock_in,
+          clock_out: shift.clock_out,
+          total_hours: shift.actual_hours_worked || shift.total_hours,
+        }
+      );
       totalBasePay += payBreakdown.base_pay;
       totalNightPay += payBreakdown.night_pay;
       totalShiftPremium += payBreakdown.shift_premium;
       totalHours += payBreakdown.total_hours;
       totalNightHours += payBreakdown.night_hours;
     }
-    
+
     return {
       shift_count: shifts.rows.length,
       total_hours: parseFloat(totalHours.toFixed(2)),
@@ -1174,10 +956,12 @@ async function calculateMonthlyShiftPay(companyId, employeeId, month, year) {
       base_pay: parseFloat(totalBasePay.toFixed(2)),
       night_pay: parseFloat(totalNightPay.toFixed(2)),
       shift_premium: parseFloat(totalShiftPremium.toFixed(2)),
-      total_pay: parseFloat((totalBasePay + totalNightPay + totalShiftPremium).toFixed(2))
+      total_pay: parseFloat(
+        (totalBasePay + totalNightPay + totalShiftPremium).toFixed(2)
+      ),
     };
   } catch (err) {
-    console.error('Error calculating monthly shift pay:', err);
+    console.error("Error calculating monthly shift pay:", err);
     return {
       shift_count: 0,
       total_hours: 0,
@@ -1186,48 +970,48 @@ async function calculateMonthlyShiftPay(companyId, employeeId, month, year) {
       night_pay: 0,
       shift_premium: 0,
       total_pay: 0,
-      error: err.message
+      error: err.message,
     };
   }
 }
 
 // =====================================================
-// EXPORT SHIFT PAY CALCULATION FOR PAYROLL
-// Add this endpoint to your payroll routes
+// GET SHIFT EARNINGS ENDPOINT
 // =====================================================
 exports.getShiftEarnings = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
     const { employee_id, month, year } = req.query;
-    
+
     if (!companyId || !employee_id || !month || !year) {
-      return res.status(400).json({ 
-        error: 'company_id, employee_id, month, and year are required' 
-      });
+      return res
+        .status(400)
+        .json({
+          error: "company_id, employee_id, month, and year are required",
+        });
     }
-    
+
     const earnings = await calculateMonthlyShiftPay(
       companyId,
       toInt(employee_id, 0),
       toInt(month, 0),
       toInt(year, 0)
     );
-    
+
     return res.json(earnings);
   } catch (err) {
-    console.error('ERROR in getShiftEarnings:', err);
-    return res.status(500).json({
-      error: 'Failed to calculate shift earnings',
-      details: err.message
-    });
+    console.error("ERROR in getShiftEarnings:", err);
+    return res
+      .status(500)
+      .json({
+        error: "Failed to calculate shift earnings",
+        details: err.message,
+      });
   }
 };
 
-// Export all the helper functions
-module.exports = {
-  ...exports, // Keep all existing exports
-  calculateShiftPay,
-  calculateNightHours,
-  checkPublicHoliday,
-  calculateMonthlyShiftPay
-};
+// Export helper functions for use in other modules if needed
+exports.calculateShiftPay = calculateShiftPay;
+exports.calculateNightHours = calculateNightHours;
+exports.checkPublicHoliday = checkPublicHoliday;
+exports.calculateMonthlyShiftPay = calculateMonthlyShiftPay;
