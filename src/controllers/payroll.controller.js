@@ -925,3 +925,309 @@ exports.getPayrollHistory = async (req, res) => {
     });
   }
 };
+// ADD THESE FUNCTIONS TO YOUR EXISTING payroll.controller.js
+// Place them at the bottom, replacing the stub calculateShiftPay function
+
+// =====================================================
+// SHIFT PAY CALCULATION HELPERS
+// =====================================================
+
+/**
+ * Calculate night hours worked (18:00 - 06:00)
+ * @param {Date|string} clockIn - Clock in timestamp
+ * @param {Date|string} clockOut - Clock out timestamp
+ * @returns {number} Hours worked during night period
+ */
+function calculateNightHours(clockIn, clockOut) {
+  const NIGHT_START = 18; // 6 PM
+  const NIGHT_END = 6;    // 6 AM
+  
+  const clockInDate = new Date(clockIn);
+  const clockOutDate = new Date(clockOut);
+  
+  let nightHours = 0;
+  const totalHours = (clockOutDate - clockInDate) / (1000 * 60 * 60);
+  
+  // Loop through each hour worked
+  for (let i = 0; i < Math.ceil(totalHours); i++) {
+    const currentTime = new Date(clockInDate.getTime() + i * 60 * 60 * 1000);
+    const hour = currentTime.getHours();
+    
+    // Check if hour is in night period
+    if (hour >= NIGHT_START || hour < NIGHT_END) {
+      nightHours++;
+    }
+  }
+  
+  return Math.min(nightHours, totalHours);
+}
+
+/**
+ * Check if a date is a South African public holiday
+ * @param {Date|string} date - Date to check
+ * @returns {Promise<boolean>} True if public holiday
+ */
+async function checkPublicHoliday(date) {
+  try {
+    // Public holidays for 2026 (hardcoded for now)
+    const publicHolidays2026 = [
+      '2026-01-01', // New Year's Day
+      '2026-03-21', // Human Rights Day
+      '2026-04-10', // Good Friday
+      '2026-04-13', // Family Day
+      '2026-04-27', // Freedom Day
+      '2026-05-01', // Workers' Day
+      '2026-06-16', // Youth Day
+      '2026-08-09', // National Women's Day
+      '2026-09-24', // Heritage Day
+      '2026-12-16', // Day of Reconciliation
+      '2026-12-25', // Christmas Day
+      '2026-12-26', // Day of Goodwill
+    ];
+    
+    const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+    return publicHolidays2026.includes(dateStr);
+  } catch (err) {
+    console.error('Error checking public holiday:', err);
+    return false;
+  }
+}
+
+/**
+ * Calculate shift pay with night differential, Sunday, and holiday premiums
+ * South African Labour Law Compliance:
+ * - Night work (18:00-06:00): +10% of hourly rate
+ * - Sunday work: Double time (200%)
+ * - Public holidays: Double time (200%)
+ * 
+ * @param {Object} employee - Employee object with hourly_rate
+ * @param {Object} shift - Shift template with multiplier
+ * @param {Object} attendance - Attendance record with clock times
+ * @returns {Promise<Object>} Calculated pay breakdown
+ */
+async function calculateShiftPay(employee, shift, attendance) {
+  try {
+    // Base hourly rate
+    let hourlyRate = employee.hourly_rate;
+    if (!hourlyRate && employee.salary) {
+      // Calculate hourly rate from monthly salary (160 hours/month standard)
+      hourlyRate = employee.salary / 160;
+    }
+    
+    // Total hours worked
+    const totalHours = attendance.total_hours || 8;
+    
+    // Calculate base pay
+    let basePay = hourlyRate * totalHours;
+    
+    // Apply shift template multiplier (e.g., 1.5x for night shift premium)
+    if (shift && shift.base_rate_multiplier) {
+      basePay *= shift.base_rate_multiplier;
+    }
+    
+    // Calculate night hours (18:00 - 06:00)
+    let nightHours = 0;
+    let nightPay = 0;
+    if (attendance.clock_in && attendance.clock_out) {
+      nightHours = calculateNightHours(attendance.clock_in, attendance.clock_out);
+      
+      if (nightHours > 0) {
+        // SA Law: 10% premium for night work
+        nightPay = hourlyRate * nightHours * 0.10;
+      }
+    }
+    
+    // Check for Sunday work
+    const isSunday = new Date(attendance.date).getDay() === 0;
+    
+    // Check for public holiday
+    const isPublicHoliday = await checkPublicHoliday(attendance.date);
+    
+    // Apply premium rates
+    let premiumMultiplier = 1.0;
+    let premiumType = 'regular';
+    
+    if (isPublicHoliday) {
+      // SA Law: Public holidays = Double time (200%)
+      premiumMultiplier = 2.0;
+      premiumType = 'public_holiday';
+    } else if (isSunday) {
+      // SA Law: Sunday work = Double time (200%)
+      premiumMultiplier = 2.0;
+      premiumType = 'sunday';
+    }
+    
+    // Calculate final pay
+    let shiftPremium = 0;
+    if (premiumMultiplier > 1.0) {
+      shiftPremium = basePay * (premiumMultiplier - 1.0);
+    }
+    
+    const totalPay = basePay + shiftPremium + nightPay;
+    
+    // Return detailed breakdown
+    return {
+      hourly_rate: parseFloat(hourlyRate.toFixed(2)),
+      total_hours: parseFloat(totalHours.toFixed(2)),
+      night_hours: parseFloat(nightHours.toFixed(2)),
+      base_pay: parseFloat(basePay.toFixed(2)),
+      night_pay: parseFloat(nightPay.toFixed(2)),
+      shift_premium: parseFloat(shiftPremium.toFixed(2)),
+      premium_type: premiumType,
+      premium_multiplier: premiumMultiplier,
+      is_sunday: isSunday,
+      is_public_holiday: isPublicHoliday,
+      total_pay: parseFloat(totalPay.toFixed(2))
+    };
+  } catch (err) {
+    console.error('Error calculating shift pay:', err);
+    // Return safe fallback
+    return {
+      hourly_rate: employee.hourly_rate || 0,
+      total_hours: attendance.total_hours || 0,
+      night_hours: 0,
+      base_pay: 0,
+      night_pay: 0,
+      shift_premium: 0,
+      premium_type: 'error',
+      premium_multiplier: 1.0,
+      is_sunday: false,
+      is_public_holiday: false,
+      total_pay: 0,
+      error: err.message
+    };
+  }
+}
+
+/**
+ * Process shifts for payroll integration
+ * Call this when generating payroll to include shift-based earnings
+ * 
+ * @param {number} companyId - Company ID
+ * @param {number} employeeId - Employee ID
+ * @param {number} month - Month number (1-12)
+ * @param {number} year - Year
+ * @returns {Promise<Object>} Total shift earnings for the period
+ */
+async function calculateMonthlyShiftPay(companyId, employeeId, month, year) {
+  try {
+    // Get all completed shifts for the employee in this period
+    const shifts = await db.query(
+      `SELECT 
+        es.*,
+        st.base_rate_multiplier,
+        st.is_night_shift,
+        ar.clock_in,
+        ar.clock_out,
+        ar.total_hours,
+        e.hourly_rate,
+        e.salary
+      FROM employee_shifts es
+      JOIN shift_templates st ON es.shift_template_id = st.id
+      LEFT JOIN attendance_records ar ON es.attendance_record_id = ar.id
+      JOIN employees e ON es.employee_id = e.id
+      WHERE es.company_id = $1
+        AND es.employee_id = $2
+        AND EXTRACT(MONTH FROM es.shift_date) = $3
+        AND EXTRACT(YEAR FROM es.shift_date) = $4
+        AND es.status = 'completed'`,
+      [companyId, employeeId, month, year]
+    );
+    
+    let totalBasePay = 0;
+    let totalNightPay = 0;
+    let totalShiftPremium = 0;
+    let totalHours = 0;
+    let totalNightHours = 0;
+    
+    // Calculate pay for each shift
+    for (const shift of shifts.rows) {
+      const employee = {
+        hourly_rate: shift.hourly_rate,
+        salary: shift.salary
+      };
+      
+      const shiftTemplate = {
+        base_rate_multiplier: shift.base_rate_multiplier
+      };
+      
+      const attendance = {
+        date: shift.shift_date,
+        clock_in: shift.clock_in,
+        clock_out: shift.clock_out,
+        total_hours: shift.actual_hours_worked || shift.total_hours
+      };
+      
+      const payBreakdown = await calculateShiftPay(employee, shiftTemplate, attendance);
+      
+      totalBasePay += payBreakdown.base_pay;
+      totalNightPay += payBreakdown.night_pay;
+      totalShiftPremium += payBreakdown.shift_premium;
+      totalHours += payBreakdown.total_hours;
+      totalNightHours += payBreakdown.night_hours;
+    }
+    
+    return {
+      shift_count: shifts.rows.length,
+      total_hours: parseFloat(totalHours.toFixed(2)),
+      total_night_hours: parseFloat(totalNightHours.toFixed(2)),
+      base_pay: parseFloat(totalBasePay.toFixed(2)),
+      night_pay: parseFloat(totalNightPay.toFixed(2)),
+      shift_premium: parseFloat(totalShiftPremium.toFixed(2)),
+      total_pay: parseFloat((totalBasePay + totalNightPay + totalShiftPremium).toFixed(2))
+    };
+  } catch (err) {
+    console.error('Error calculating monthly shift pay:', err);
+    return {
+      shift_count: 0,
+      total_hours: 0,
+      total_night_hours: 0,
+      base_pay: 0,
+      night_pay: 0,
+      shift_premium: 0,
+      total_pay: 0,
+      error: err.message
+    };
+  }
+}
+
+// =====================================================
+// EXPORT SHIFT PAY CALCULATION FOR PAYROLL
+// Add this endpoint to your payroll routes
+// =====================================================
+exports.getShiftEarnings = async (req, res) => {
+  try {
+    const companyId = req.user?.company_id;
+    const { employee_id, month, year } = req.query;
+    
+    if (!companyId || !employee_id || !month || !year) {
+      return res.status(400).json({ 
+        error: 'company_id, employee_id, month, and year are required' 
+      });
+    }
+    
+    const earnings = await calculateMonthlyShiftPay(
+      companyId,
+      toInt(employee_id, 0),
+      toInt(month, 0),
+      toInt(year, 0)
+    );
+    
+    return res.json(earnings);
+  } catch (err) {
+    console.error('ERROR in getShiftEarnings:', err);
+    return res.status(500).json({
+      error: 'Failed to calculate shift earnings',
+      details: err.message
+    });
+  }
+};
+
+// Export all the helper functions
+module.exports = {
+  ...exports, // Keep all existing exports
+  calculateShiftPay,
+  calculateNightHours,
+  checkPublicHoliday,
+  calculateMonthlyShiftPay
+};
