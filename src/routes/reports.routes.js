@@ -90,4 +90,41 @@ router.get(
   reportsController.exportPDF
 );
 
+
+// ── NEW: Department Labour Costing (Phase 2) ──
+router.get(
+  "/department-labour-costing",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.getDepartmentLabourCosting
+);
+
+router.get(
+  "/shift-type-analysis",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.getShiftTypeAnalysis
+);
+
+router.get(
+  "/labour-cost-trends",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.getLabourCostTrends
+);
+
+router.get(
+  "/overtime-analysis",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.getOvertimeAnalysis
+);
+
+router.get(
+  "/export/department-labour-costing.csv",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  reportsController.exportDepartmentLabourCostingCSV
+);
+
 module.exports = router;

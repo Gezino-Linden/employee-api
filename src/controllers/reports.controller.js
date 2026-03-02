@@ -1319,3 +1319,305 @@ exports.exportPDF = async (req, res) => {
       .json({ error: "Failed to generate PDF report", details: err.message });
   }
 };
+// ADD THESE FUNCTIONS TO YOUR EXISTING reports.controller.js
+// Place them after your existing report functions
+
+// =====================================================
+// DEPARTMENT LABOUR COSTING REPORT
+// Includes payroll + shift costs
+// =====================================================
+exports.getDepartmentLabourCosting = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    
+    // Get department costs from payroll
+    const departmentCosts = await db.query(
+      `SELECT 
+        e.department,
+        CAST(COUNT(DISTINCT pr.employee_id) AS INTEGER) as employee_count,
+        COALESCE(SUM(pr.gross_pay), 0) as total_gross,
+        COALESCE(SUM(pr.net_pay), 0) as total_net,
+        COALESCE(SUM(pr.overtime), 0) as total_overtime,
+        COALESCE(AVG(pr.gross_pay), 0) as avg_gross_per_employee
+       FROM payroll_records pr
+       JOIN employees e ON pr.employee_id = e.id
+       WHERE pr.company_id = $1 
+         AND pr.month = $2 
+         AND pr.year = $3
+         AND pr.status IN ('processed', 'paid')
+       GROUP BY e.department
+       ORDER BY total_gross DESC`,
+      [companyId, month, year]
+    );
+    
+    // Get shift costs by department
+    const shiftCosts = await db.query(
+      `SELECT 
+        e.department,
+        CAST(COUNT(es.id) AS INTEGER) as shift_count,
+        COALESCE(SUM(es.total_pay), 0) as total_shift_pay,
+        COALESCE(SUM(es.shift_premium), 0) as total_shift_premium
+       FROM employee_shifts es
+       JOIN employees e ON es.employee_id = e.id
+       WHERE es.company_id = $1
+         AND EXTRACT(MONTH FROM es.shift_date) = $2
+         AND EXTRACT(YEAR FROM es.shift_date) = $3
+         AND es.status = 'completed'
+       GROUP BY e.department`,
+      [companyId, month, year]
+    );
+    
+    // Get total for percentages
+    const totals = await db.query(
+      `SELECT COALESCE(SUM(pr.gross_pay), 0) as total_payroll
+       FROM payroll_records pr
+       WHERE pr.company_id = $1 AND pr.month = $2 AND pr.year = $3
+         AND pr.status IN ('processed', 'paid')`,
+      [companyId, month, year]
+    );
+    
+    const totalPayroll = parseFloat(totals.rows[0].total_payroll);
+    
+    // Merge data
+    const departments = departmentCosts.rows.map(dept => {
+      const shiftData = shiftCosts.rows.find(s => s.department === dept.department) || {};
+      const totalCost = parseFloat(dept.total_gross) + parseFloat(shiftData.total_shift_pay || 0);
+      const percentage = totalPayroll > 0 ? (totalCost / totalPayroll) * 100 : 0;
+      
+      return {
+        department: dept.department || 'Unassigned',
+        employee_count: dept.employee_count,
+        payroll_cost: round2(dept.total_gross),
+        shift_cost: round2(shiftData.total_shift_pay || 0),
+        total_cost: round2(totalCost),
+        percentage: round2(percentage),
+        avg_cost: round2(dept.avg_gross_per_employee),
+        overtime: round2(dept.total_overtime),
+        shift_count: shiftData.shift_count || 0
+      };
+    });
+    
+    return res.json({
+      period: { month, year },
+      total_payroll: round2(totalPayroll),
+      departments
+    });
+  } catch (err) {
+    console.error('ERROR in getDepartmentLabourCosting:', err);
+    return res.status(500).json({ error: 'Failed to generate department labour costing', details: err.message });
+  }
+};
+
+// =====================================================
+// SHIFT TYPE ANALYSIS
+// Breakdown by shift type (Morning/Evening/Night)
+// =====================================================
+exports.getShiftTypeAnalysis = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    
+    const result = await db.query(
+      `SELECT 
+        st.name as shift_type,
+        st.code,
+        CAST(COUNT(es.id) AS INTEGER) as shift_count,
+        CAST(COUNT(DISTINCT es.employee_id) AS INTEGER) as unique_employees,
+        COALESCE(SUM(es.base_pay), 0) as total_base_pay,
+        COALESCE(SUM(es.shift_premium), 0) as total_premium,
+        COALESCE(SUM(es.total_pay), 0) as total_cost,
+        COALESCE(AVG(es.total_pay), 0) as avg_cost_per_shift,
+        st.start_time,
+        st.end_time
+       FROM employee_shifts es
+       JOIN shift_templates st ON es.shift_template_id = st.id
+       WHERE es.company_id = $1
+         AND EXTRACT(MONTH FROM es.shift_date) = $2
+         AND EXTRACT(YEAR FROM es.shift_date) = $3
+         AND es.status = 'completed'
+       GROUP BY st.name, st.code, st.start_time, st.end_time
+       ORDER BY total_cost DESC`,
+      [companyId, month, year]
+    );
+    
+    return res.json({
+      period: { month, year },
+      shift_types: result.rows.map(row => ({
+        shift_type: row.shift_type,
+        code: row.code,
+        shift_count: row.shift_count,
+        unique_employees: row.unique_employees,
+        total_base_pay: round2(row.total_base_pay),
+        total_premium: round2(row.total_premium),
+        total_cost: round2(row.total_cost),
+        avg_cost_per_shift: round2(row.avg_cost_per_shift),
+        start_time: row.start_time,
+        end_time: row.end_time
+      }))
+    });
+  } catch (err) {
+    console.error('ERROR in getShiftTypeAnalysis:', err);
+    return res.status(500).json({ error: 'Failed to generate shift analysis', details: err.message });
+  }
+};
+
+// =====================================================
+// LABOUR COST TRENDS
+// Month-over-month comparison
+// =====================================================
+exports.getLabourCostTrends = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const department = req.query.department;
+    
+    let query = `
+      SELECT 
+        pr.month,
+        e.department,
+        CAST(COUNT(DISTINCT pr.employee_id) AS INTEGER) as employee_count,
+        COALESCE(SUM(pr.gross_pay), 0) as total_cost
+       FROM payroll_records pr
+       JOIN employees e ON pr.employee_id = e.id
+       WHERE pr.company_id = $1 AND pr.year = $2
+         AND pr.status IN ('processed', 'paid')
+    `;
+    
+    const params = [companyId, year];
+    
+    if (department) {
+      query += ` AND e.department = $3`;
+      params.push(department);
+    }
+    
+    query += ` GROUP BY pr.month, e.department ORDER BY pr.month`;
+    
+    const result = await db.query(query, params);
+    
+    // Format for charts
+    const months = Array.from({ length: 12 }, (_, i) => i + 1);
+    const trendData = months.map(month => {
+      const monthData = result.rows.filter(r => r.month === month);
+      const totalCost = monthData.reduce((sum, r) => sum + parseFloat(r.total_cost), 0);
+      const totalEmployees = monthData.reduce((sum, r) => sum + r.employee_count, 0);
+      
+      return {
+        month,
+        total_cost: round2(totalCost),
+        employee_count: totalEmployees,
+        departments: monthData.map(d => ({
+          department: d.department,
+          cost: round2(d.total_cost),
+          employees: d.employee_count
+        }))
+      };
+    });
+    
+    return res.json({ year, department: department || 'All', trends: trendData });
+  } catch (err) {
+    console.error('ERROR in getLabourCostTrends:', err);
+    return res.status(500).json({ error: 'Failed to generate trends', details: err.message });
+  }
+};
+
+// =====================================================
+// OVERTIME ANALYSIS
+// Track overtime by department
+// =====================================================
+exports.getOvertimeAnalysis = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    
+    const result = await db.query(
+      `SELECT 
+        e.department,
+        CAST(COUNT(DISTINCT pr.employee_id) AS INTEGER) as employees_with_overtime,
+        COALESCE(SUM(pr.overtime), 0) as total_overtime_pay,
+        COALESCE(SUM(pr.gross_pay), 0) as total_gross,
+        CASE 
+          WHEN SUM(pr.gross_pay) > 0 
+          THEN (SUM(pr.overtime) / SUM(pr.gross_pay)) * 100
+          ELSE 0
+        END as overtime_percentage
+       FROM payroll_records pr
+       JOIN employees e ON pr.employee_id = e.id
+       WHERE pr.company_id = $1 AND pr.month = $2 AND pr.year = $3
+         AND pr.status IN ('processed', 'paid')
+         AND pr.overtime > 0
+       GROUP BY e.department
+       ORDER BY total_overtime_pay DESC`,
+      [companyId, month, year]
+    );
+    
+    return res.json({
+      period: { month, year },
+      departments: result.rows.map(row => ({
+        department: row.department,
+        employees_with_overtime: row.employees_with_overtime,
+        total_overtime_pay: round2(row.total_overtime_pay),
+        total_gross: round2(row.total_gross),
+        overtime_percentage: round2(row.overtime_percentage)
+      }))
+    });
+  } catch (err) {
+    console.error('ERROR in getOvertimeAnalysis:', err);
+    return res.status(500).json({ error: 'Failed to generate overtime analysis', details: err.message });
+  }
+};
+
+// =====================================================
+// EXPORT DEPARTMENT LABOUR COSTING CSV
+// =====================================================
+exports.exportDepartmentLabourCostingCSV = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    
+    const result = await db.query(
+      `SELECT 
+        e.department,
+        CAST(COUNT(DISTINCT pr.employee_id) AS INTEGER) as employee_count,
+        COALESCE(SUM(pr.basic_salary), 0) as basic_salary,
+        COALESCE(SUM(pr.allowances), 0) as allowances,
+        COALESCE(SUM(pr.overtime), 0) as overtime,
+        COALESCE(SUM(pr.gross_pay), 0) as gross_pay,
+        COALESCE(SUM(pr.total_deductions), 0) as deductions,
+        COALESCE(SUM(pr.net_pay), 0) as net_pay
+       FROM payroll_records pr
+       JOIN employees e ON pr.employee_id = e.id
+       WHERE pr.company_id = $1 AND pr.month = $2 AND pr.year = $3
+         AND pr.status IN ('processed', 'paid')
+       GROUP BY e.department
+       ORDER BY gross_pay DESC`,
+      [companyId, month, year]
+    );
+    
+    let csv = 'Department Labour Costing Report\n';
+    csv += `Period: ${month}/${year}\n\n`;
+    csv += 'Department,Employees,Basic Salary,Allowances,Overtime,Gross Pay,Deductions,Net Pay\n';
+    
+    result.rows.forEach(row => {
+      csv += `${row.department || 'Unassigned'},`;
+      csv += `${row.employee_count},`;
+      csv += `${round2(row.basic_salary)},`;
+      csv += `${round2(row.allowances)},`;
+      csv += `${round2(row.overtime)},`;
+      csv += `${round2(row.gross_pay)},`;
+      csv += `${round2(row.deductions)},`;
+      csv += `${round2(row.net_pay)}\n`;
+    });
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="dept-labour-costing-${month}-${year}.csv"`);
+    return res.send(csv);
+  } catch (err) {
+    console.error('ERROR in exportDepartmentLabourCostingCSV:', err);
+    return res.status(500).json({ error: 'Failed to export CSV', details: err.message });
+  }
+};
