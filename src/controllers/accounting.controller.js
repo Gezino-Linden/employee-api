@@ -569,3 +569,204 @@ exports.getVATTransactions = async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+// ── CLOSE MONTH-END PERIOD ────────────────────────────────────
+// Add this to the bottom of accounting.controller.js
+// Route: POST /api/accounting/period/close
+// Body: { month, year }
+// ─────────────────────────────────────────────────────────────
+exports.closePeriod = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const companyId = req.user?.company_id;
+    const { month, year } = req.body;
+
+    if (!month || !year)
+      return res.status(400).json({ error: "month and year are required" });
+
+    const m = parseInt(month);
+    const y = parseInt(year);
+
+    await client.query("BEGIN");
+
+    // 1. Check period isn't already closed
+    const existing = await client.query(
+      `SELECT id, status FROM accounting_periods
+       WHERE company_id = $1 AND period_month = $2 AND period_year = $3`,
+      [companyId, m, y]
+    );
+
+    if (existing.rows.length > 0 && existing.rows[0].status === "closed") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: `Period ${month}/${year} is already closed`,
+        period_id: existing.rows[0].id,
+      });
+    }
+
+    // 2. Snapshot VAT — output VAT (from invoices paid this period)
+    const outputVat = await client.query(
+      `SELECT COALESCE(SUM(vat_amount), 0) as vat
+       FROM vat_transactions
+       WHERE company_id = $1
+         AND transaction_type = 'output'
+         AND vat_period_month = $2
+         AND vat_period_year  = $3`,
+      [companyId, m, y]
+    );
+
+    // 3. Snapshot VAT — input VAT (from bills this period)
+    const inputVat = await client.query(
+      `SELECT COALESCE(SUM(vat_amount), 0) as vat
+       FROM vat_transactions
+       WHERE company_id = $1
+         AND transaction_type = 'input'
+         AND vat_period_month = $2
+         AND vat_period_year  = $3`,
+      [companyId, m, y]
+    );
+
+    // Fallback to invoices/ap_invoices if vat_transactions is sparse
+    const invVat = await client.query(
+      `SELECT COALESCE(SUM(vat_amount), 0) as vat
+       FROM invoices
+       WHERE company_id = $1
+         AND EXTRACT(MONTH FROM invoice_date) = $2
+         AND EXTRACT(YEAR  FROM invoice_date) = $3
+         AND status IN ('paid','partial','sent')`,
+      [companyId, m, y]
+    );
+
+    const apVat = await client.query(
+      `SELECT COALESCE(SUM(vat_amount), 0) as vat
+       FROM ap_invoices
+       WHERE company_id = $1
+         AND EXTRACT(MONTH FROM invoice_date) = $2
+         AND EXTRACT(YEAR  FROM invoice_date) = $3
+         AND status != 'cancelled'`,
+      [companyId, m, y]
+    );
+
+    const finalOutputVat = toNum(outputVat.rows[0].vat) || toNum(invVat.rows[0].vat);
+    const finalInputVat  = toNum(inputVat.rows[0].vat)  || toNum(apVat.rows[0].vat);
+    const vatPayable     = finalOutputVat - finalInputVat;
+
+    // 4. Snapshot revenue totals for this period
+    const revenue = await client.query(
+      `SELECT
+         COALESCE(SUM(total_revenue), 0) as total_revenue,
+         COALESCE(SUM(total_costs),   0) as total_costs,
+         COALESCE(SUM(total_vat),     0) as total_vat,
+         COALESCE(AVG(occupancy_rate),0) as avg_occupancy
+       FROM daily_revenue
+       WHERE company_id = $1
+         AND EXTRACT(MONTH FROM revenue_date) = $2
+         AND EXTRACT(YEAR  FROM revenue_date) = $3`,
+      [companyId, m, y]
+    );
+
+    // 5. Snapshot payroll costs
+    const payroll = await client.query(
+      `SELECT
+         COALESCE(SUM(gross_pay), 0) as gross,
+         COALESCE(SUM(net_pay),   0) as net,
+         COALESCE(SUM(tax),       0) as paye,
+         COALESCE(SUM(uif),       0) as uif
+       FROM payroll_records
+       WHERE company_id = $1 AND month = $2 AND year = $3
+         AND status IN ('processed','paid')`,
+      [companyId, m, y]
+    );
+
+    // 6. Upsert the accounting_periods record and mark closed
+    const period = await client.query(
+      `INSERT INTO accounting_periods
+         (company_id, period_month, period_year, status,
+          total_revenue, total_costs, payroll_cost,
+          output_vat, input_vat, vat_payable,
+          avg_occupancy, closed_by, closed_at)
+       VALUES ($1,$2,$3,'closed',$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+       ON CONFLICT (company_id, period_month, period_year)
+       DO UPDATE SET
+         status        = 'closed',
+         total_revenue = EXCLUDED.total_revenue,
+         total_costs   = EXCLUDED.total_costs,
+         payroll_cost  = EXCLUDED.payroll_cost,
+         output_vat    = EXCLUDED.output_vat,
+         input_vat     = EXCLUDED.input_vat,
+         vat_payable   = EXCLUDED.vat_payable,
+         avg_occupancy = EXCLUDED.avg_occupancy,
+         closed_by     = EXCLUDED.closed_by,
+         closed_at     = NOW()
+       RETURNING *`,
+      [
+        companyId, m, y,
+        toNum(revenue.rows[0].total_revenue),
+        toNum(revenue.rows[0].total_costs),
+        toNum(payroll.rows[0].gross),
+        finalOutputVat,
+        finalInputVat,
+        vatPayable > 0 ? vatPayable : 0,
+        toNum(revenue.rows[0].avg_occupancy),
+        req.user.id,
+      ]
+    );
+
+    // 7. Lock all daily_revenue entries for this period
+    await client.query(
+      `UPDATE daily_revenue
+       SET status = 'locked', updated_at = NOW()
+       WHERE company_id = $1
+         AND EXTRACT(MONTH FROM revenue_date) = $2
+         AND EXTRACT(YEAR  FROM revenue_date) = $3`,
+      [companyId, m, y]
+    );
+
+    // 8. Post VAT payable as a GL liability line
+    if (vatPayable > 0) {
+      const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      try {
+        await client.query(
+          `INSERT INTO gl_journal_lines
+             (company_id, journal_date, reference, account_code, account_name,
+              debit, credit, category, source_type, source_id, created_by)
+           VALUES
+             ($1, NOW(), $2, '2200', 'VAT Control Account',   $3, 0,  'vat', 'period_close', $4, $5),
+             ($1, NOW(), $2, '2210', 'SARS VAT Payable',       0, $3, 'vat', 'period_close', $4, $5)`,
+          [
+            companyId,
+            `VAT-CLOSE-${monthNames[m-1]}-${y}`,
+            vatPayable,
+            period.rows[0].id,
+            req.user.id,
+          ]
+        );
+      } catch (glErr) {
+        console.warn("VAT GL journal skipped:", glErr.message);
+      }
+    }
+
+    await client.query("COMMIT");
+
+    return res.json({
+      success: true,
+      message: `Period ${month}/${year} closed successfully`,
+      period: period.rows[0],
+      summary: {
+        total_revenue:  toNum(revenue.rows[0].total_revenue),
+        total_costs:    toNum(revenue.rows[0].total_costs),
+        payroll_cost:   toNum(payroll.rows[0].gross),
+        output_vat:     finalOutputVat,
+        input_vat:      finalInputVat,
+        vat_payable:    vatPayable > 0 ? vatPayable : 0,
+        vat_refundable: vatPayable < 0 ? Math.abs(vatPayable) : 0,
+        avg_occupancy:  toNum(revenue.rows[0].avg_occupancy),
+      },
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("closePeriod error:", err);
+    return res.status(500).json({ error: "Failed to close period", details: err.message });
+  } finally {
+    client.release();
+  }
+};

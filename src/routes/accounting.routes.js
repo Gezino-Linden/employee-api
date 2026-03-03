@@ -51,4 +51,9 @@ router.get(
   c.getVATTransactions
 );
 
+// ── Month-End Close  ◄── NEW ──────────────────────────────────
+// Locks the period, snapshots all figures, posts VAT liability to GL
+router.post("/period/close", requireAuth, requireRoles("admin", "manager"), c.closePeriod);
+
+
 module.exports = router;

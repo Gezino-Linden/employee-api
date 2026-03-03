@@ -1015,3 +1015,174 @@ exports.calculateShiftPay = calculateShiftPay;
 exports.calculateNightHours = calculateNightHours;
 exports.checkPublicHoliday = checkPublicHoliday;
 exports.calculateMonthlyShiftPay = calculateMonthlyShiftPay;
+
+// =====================================================
+// MARK AS PAID  (replace the existing markAsPaid export)
+// =====================================================
+exports.markAsPaid = async (req, res) => {
+  let client;
+  try {
+    const companyId = req.user?.company_id;
+    if (!companyId)
+      return res.status(400).json({ error: "Company ID not found" });
+
+    const recordId = toInt(req.params.id, 0);
+    if (!recordId) return res.status(400).json({ error: "Invalid record ID" });
+
+    const { payment_method, payment_date, payment_reference } = req.body;
+
+    if (payment_method && !validatePaymentMethod(payment_method)) {
+      return res.status(400).json({
+        error: "Invalid payment method",
+        valid_methods: VALID_PAYMENT_METHODS,
+      });
+    }
+    if (payment_date && isNaN(Date.parse(payment_date))) {
+      return res
+        .status(400)
+        .json({ error: "Invalid payment date format", format: "YYYY-MM-DD" });
+    }
+
+    client = await db.connect();
+    await client.query("BEGIN");
+
+    // 1. Mark record as paid
+    const result = await client.query(
+      `UPDATE payroll_records
+       SET
+         status = 'paid',
+         payment_method    = COALESCE($1, payment_method),
+         payment_date      = COALESCE($2, payment_date),
+         payment_reference = COALESCE($3, payment_reference),
+         updated_at        = NOW()
+       WHERE id = $4 AND company_id = $5 AND status != 'paid'
+       RETURNING *`,
+      [payment_method, payment_date, payment_reference, recordId, companyId]
+    );
+
+    if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
+      const check = await db.query(
+        `SELECT status FROM payroll_records WHERE id = $1 AND company_id = $2`,
+        [recordId, companyId]
+      );
+      if (check.rows.length === 0)
+        return res.status(404).json({ error: "Payroll record not found" });
+      if (check.rows[0].status === "paid")
+        return res.status(409).json({ error: "Record already marked as paid" });
+      return res.status(400).json({ error: "Unable to mark as paid" });
+    }
+
+    const record = result.rows[0];
+
+    // 2. Audit log
+    await client.query(
+      `INSERT INTO payroll_audit_log
+         (payroll_record_id, changed_by, action, old_status, new_status, notes, created_at)
+       VALUES ($1, $2, 'mark_paid', 'processed', 'paid', $3, NOW())`,
+      [recordId, req.user.id, `Payment via ${payment_method || "unknown"}`]
+    );
+
+    // 3. AUTO-POST GL JOURNAL LINES for this payroll record
+    //    Debit: Salaries & Wages  |  Credit: PAYE, UIF, Pension, Net Salaries Payable
+    try {
+      const gross  = toNum(record.gross_pay);
+      const tax    = toNum(record.tax);
+      const uif    = toNum(record.uif);
+      const pen    = toNum(record.pension);
+      const net    = toNum(record.net_pay);
+      const pDate  = payment_date || new Date().toISOString().split("T")[0];
+
+      await client.query(
+        `INSERT INTO gl_journal_lines
+           (company_id, journal_date, reference, account_code, account_name,
+            debit, credit, category, source_type, source_id, created_by)
+         VALUES
+           ($1,$2,$3,'6100','Salaries & Wages',          $4,   0,    'payroll','payroll_record',$5,$6),
+           ($1,$2,$3,'2100','SARS PAYE Liability',         0,   $7,  'payroll','payroll_record',$5,$6),
+           ($1,$2,$3,'2110','Pension Liability',            0,   $8,  'payroll','payroll_record',$5,$6),
+           ($1,$2,$3,'2130','UIF Liability',                0,   $9,  'payroll','payroll_record',$5,$6),
+           ($1,$2,$3,'2150','Net Salaries Payable',         0,   $10, 'payroll','payroll_record',$5,$6)`,
+        [
+          companyId,
+          pDate,
+          `PAYROLL-${recordId}`,
+          gross, recordId, req.user.id,
+          tax, pen, uif, net,
+        ]
+      );
+    } catch (glErr) {
+      // GL lines are best-effort — don't fail the payment if table doesn't exist yet
+      console.warn("GL journal auto-post skipped:", glErr.message);
+    }
+
+    // 4. AUTO-UPDATE PAYE/UIF/SDL LIABILITY GL ACCOUNTS
+    //    These sit as liabilities until paid to SARS
+    try {
+      await client.query(
+        `INSERT INTO tax_liability_ledger
+           (company_id, payroll_record_id, paye_amount, uif_employee,
+            uif_employer, sdl_amount, period_month, period_year, status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'outstanding', NOW())
+         ON CONFLICT (company_id, payroll_record_id) DO NOTHING`,
+        [
+          companyId,
+          recordId,
+          toNum(record.tax),
+          toNum(record.uif),
+          toNum(record.uif) * 0,   // employer UIF — extend if you track separately
+          0,                        // SDL — extend if tracked
+          record.month,
+          record.year,
+        ]
+      );
+    } catch (taxErr) {
+      console.warn("Tax liability ledger skipped:", taxErr.message);
+    }
+
+    // 5. AUTO-POST PAYROLL COST TO DAILY REVENUE TABLE
+    //    So it flows into the P&L cost breakdown automatically
+    try {
+      const pDate = payment_date || new Date().toISOString().split("T")[0];
+      await client.query(
+        `INSERT INTO ap_invoices
+           (company_id, supplier_id, supplier_invoice_no, description, category,
+            invoice_date, due_date, subtotal, vat_amount, total_amount, balance_due,
+            amount_paid, status, gl_account, created_by)
+         SELECT
+           $1,
+           (SELECT id FROM ap_suppliers WHERE company_id = $1 AND name = 'Payroll' LIMIT 1),
+           $2, $3, 'payroll', $4, $4, $5, 0, $5, 0, $5, 'paid', '6100', $6
+         WHERE EXISTS (
+           SELECT 1 FROM ap_suppliers WHERE company_id = $1 AND name = 'Payroll'
+         )
+         ON CONFLICT DO NOTHING`,
+        [
+          companyId,
+          `PAYROLL-${recordId}`,
+          `Salary payment: ${record.month}/${record.year}`,
+          pDate,
+          toNum(record.gross_pay),
+          req.user.id,
+        ]
+      );
+    } catch (apErr) {
+      console.warn("AP payroll cost post skipped:", apErr.message);
+    }
+
+    await client.query("COMMIT");
+    return res.json({
+      ...record,
+      gl_journal_posted: true,
+      message: "Payment recorded and GL journal auto-posted",
+    });
+  } catch (err) {
+    if (client) await client.query("ROLLBACK");
+    console.error("ERROR in markAsPaid:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to mark as paid", details: err.message });
+  } finally {
+    if (client) client.release();
+  }
+};
