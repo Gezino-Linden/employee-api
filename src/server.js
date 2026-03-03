@@ -18,6 +18,9 @@ const irp5Routes = require("./routes/irp5.routes");
 const analyticsRoutes = require("./routes/analytics.routes");
 const accountingRoutes = require("./routes/accounting.routes");
 const shiftsRoutes = require("./routes/shifts.routes");
+const invoicesRoutes = require("./routes/invoices.routes"); // ← NEW
+const apRoutes = require("./routes/ap.routes"); // ← NEW
+const revenueRoutes = require("./routes/revenue.routes"); // ← NEW
 
 const db = require("./db");
 const { requireAuth } = require("./middleware");
@@ -32,24 +35,17 @@ if (process.env.NODE_ENV !== "production") {
 
 const app = express();
 
-/**
- * ✅ IMPORTANT for Render / proxies:
- */
 app.set("trust proxy", 1);
 
-/**
- * ✅ CORS (fixes Angular localhost)
- */
 const allowedOrigins = [
   "http://localhost:4200",
   "http://127.0.0.1:4200",
-  // ADD YOUR DEPLOYED FRONTEND URL HERE when you deploy
   // "https://your-frontend.vercel.app",
 ];
 
 const corsOptions = {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // allow Postman/curl
+    if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin)) return cb(null, true);
     return cb(new Error(`CORS blocked for origin: ${origin}`));
   },
@@ -58,19 +54,10 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
-// ✅ MUST be before rate limiters/routes
 app.use(cors(corsOptions));
-
-/**
- * ✅ Middleware
- */
 app.use(express.json({ limit: "1mb" }));
 app.use(helmet());
 
-/**
- * ✅ Handle OPTIONS preflight requests
- * FIX: Only respond to OPTIONS, don't interfere with other methods
- */
 app.use((req, res, next) => {
   if (req.method === "OPTIONS") {
     return res.sendStatus(204);
@@ -78,12 +65,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ Apply global limiter AFTER we handled OPTIONS
 app.use(apiLimiter);
 
-/**
- * ✅ Basic endpoints
- */
 app.get("/", (req, res) => res.send("Employee API running 🚀"));
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
@@ -94,28 +77,18 @@ app.get("/version", (req, res) => {
   });
 });
 
-/**
- * ✅ Swagger
- */
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-/**
- * ✅ /me (protected) - MOVED TO /api/me
- */
 app.get("/api/me", requireAuth, async (req, res) => {
   try {
-    // 🚫 Disable caching for authenticated route
     res.set("Cache-Control", "no-store");
-
     const result = await db.query(
       "SELECT id, name, email, role, company_id FROM users WHERE id = $1",
       [req.user.id]
     );
-
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "user not found" });
     }
-
     return res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -123,10 +96,7 @@ app.get("/api/me", requireAuth, async (req, res) => {
   }
 });
 
-/**
- * ✅ Routes - ALL UNDER /api PREFIX
- * FIX: Added /api prefix to match frontend expectations
- */
+// ── ROUTES ──────────────────────────────────────────────────
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/employees", employeesRoutes);
@@ -141,6 +111,9 @@ app.use("/api/irp5", irp5Routes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/accounting", accountingRoutes);
 app.use("/api/shifts", shiftsRoutes);
+app.use("/api/invoices", invoicesRoutes); // ← NEW
+app.use("/api/ap", apRoutes); // ← NEW
+app.use("/api/revenue", revenueRoutes); // ← NEW
 
 // 404
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
