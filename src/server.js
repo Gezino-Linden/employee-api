@@ -21,8 +21,12 @@ const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./swagger");
 
+// Logging and error handling
+const logger = require("./utils/logger");
+const { errorHandler, notFoundHandler } = require("./middleware/errorHandler");
+
 // Security middleware
-const { apiLimiter, authLimiter } = require("./security/rateLimiters");
+const { apiLimiter, authLimiter } = require("./middleware/rateLimiter");
 
 // Routes
 const companiesRoutes = require("./routes/companies.routes");
@@ -45,7 +49,6 @@ const revenueRoutes = require("./routes/revenue.routes");
 
 const db = require("./db");
 const { requireAuth } = require("./middleware");
-const errorHandler = require("./errorHandler");
 
 // ═══════════════════════════════════════════════════════════════
 // STEP 3: EXPRESS APP SETUP
@@ -104,14 +107,44 @@ app.use((req, res, next) => {
 // ═══════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => res.send("Employee API running 🚀"));
-app.get("/health", (req, res) => res.json({ status: "ok" }));
 
-app.get("/version", (req, res) => {
-  res.json({
-    version: process.env.RENDER_GIT_COMMIT || "local",
-    nodeEnv: process.env.NODE_ENV || "development",
-  });
+app.get("/health", async (req, res) => {
+  try {
+    // Check database health using the new method
+    const dbHealth = await db.checkHealth();
+
+    const healthStatus = {
+      status: dbHealth.healthy ? "healthy" : "unhealthy",
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(process.uptime()),
+      memory: {
+        used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+        total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+        unit: "MB",
+      },
+      database: {
+        status: dbHealth.healthy ? "connected" : "disconnected",
+        responseTime: dbHealth.responseTime,
+        connections: {
+          total: dbHealth.totalConnections,
+          idle: dbHealth.idleConnections,
+          waiting: dbHealth.waitingRequests,
+        },
+      },
+    };
+
+    const statusCode = dbHealth.healthy ? 200 : 503;
+    res.status(statusCode).json(healthStatus);
+  } catch (err) {
+    logger.error("Health check failed", { error: err.message });
+    res.status(503).json({
+      status: "unhealthy",
+      timestamp: new Date().toISOString(),
+      error: err.message,
+    });
+  }
 });
+
 
 // Swagger docs
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
@@ -132,7 +165,10 @@ app.get("/api/me", requireAuth, async (req, res) => {
     }
     return res.json(result.rows[0]);
   } catch (err) {
-    console.error(err);
+    logger.error("Error fetching user profile", {
+      error: err.message,
+      userId: req.user.id,
+    });
     return res.status(500).json({ error: "database error" });
   }
 });
@@ -165,11 +201,11 @@ app.use("/api/ap", apRoutes);
 app.use("/api/revenue", revenueRoutes);
 
 // ═══════════════════════════════════════════════════════════════
-// STEP 9: ERROR HANDLING
+// STEP 9: ERROR HANDLING (MUST BE AFTER ALL ROUTES)
 // ═══════════════════════════════════════════════════════════════
 
-// 404 handler
-app.use((req, res) => res.status(404).json({ error: "Not found" }));
+// 404 handler for undefined routes
+app.use(notFoundHandler);
 
 // Global error handler (MUST BE LAST)
 app.use(errorHandler);
@@ -179,4 +215,10 @@ app.use(errorHandler);
 // ═══════════════════════════════════════════════════════════════
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  logger.info(`🚀 Server running on port ${PORT}`);
+  logger.info(`📊 Environment: ${process.env.NODE_ENV || "development"}`);
+  logger.info(`🗄️  Database: Connected`);
+  logger.info(`🔒 Security: Rate limiting enabled`);
+  logger.info(`📝 API Docs: http://localhost:${PORT}/api-docs`);
+});
