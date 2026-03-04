@@ -908,7 +908,11 @@ async function checkPublicHoliday(date) {
   try {
     const dateStr =
       typeof date === "string" ? date : date.toISOString().split("T")[0];
-    return DATE.PUBLIC_HOLIDAYS_2026.includes(dateStr);
+    const result = await db.query(
+      `SELECT 1 FROM public_holidays WHERE date = $1 LIMIT 1`,
+      [dateStr]
+    );
+    return result.rows.length > 0;
   } catch (err) {
     return false;
   }
