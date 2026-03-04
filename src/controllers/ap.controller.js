@@ -1,19 +1,11 @@
 // File: src/controllers/ap.controller.js
 const cache = require("../utils/cache");
-const {
-  VAT,
-  GL_ACCOUNTS,
-  CACHE_TTL,
-  PAYMENT_METHODS,
-  MONTH_NAMES_SHORT,
-} = require("../config/constants");
+const { VAT, CACHE_TTL } = require("../config/constants");
 const db = require("../db");
 
 function toNum(v) {
   return parseFloat(v) || 0;
 }
-
-
 
 // ── GET SUPPLIERS ─────────────────────────────────────────────
 exports.getSuppliers = async (req, res) => {
@@ -21,7 +13,6 @@ exports.getSuppliers = async (req, res) => {
     const companyId = req.user?.company_id;
     const { search, category, active = "true" } = req.query;
 
-    // Only cache the default unfiltered list (search/category bypass cache)
     const isDefaultQuery = !search && !category && active === "true";
     const cacheKey = `suppliers:${companyId}`;
 
@@ -54,9 +45,7 @@ exports.getSuppliers = async (req, res) => {
     query += ` ORDER BY name`;
     const result = await db.query(query, params);
 
-    if (isDefaultQuery) {
-      cache.set(cacheKey, result.rows, CACHE_TTL.SUPPLIERS);
-    }
+    if (isDefaultQuery) cache.set(cacheKey, result.rows, CACHE_TTL.SUPPLIERS);
 
     return res.json({ data: result.rows, count: result.rows.length });
   } catch (err) {
@@ -108,9 +97,7 @@ exports.createSupplier = async (req, res) => {
       ]
     );
 
-    // Invalidate suppliers cache so next load gets fresh data
     cache.del(`suppliers:${companyId}`);
-
     return res
       .status(201)
       .json({ message: "Supplier created", supplier: result.rows[0] });
@@ -172,9 +159,7 @@ exports.updateSupplier = async (req, res) => {
     if (result.rows.length === 0)
       return res.status(404).json({ error: "Supplier not found" });
 
-    // Invalidate suppliers cache so next load gets fresh data
     cache.del(`suppliers:${companyId}`);
-
     return res.json({ message: "Supplier updated", supplier: result.rows[0] });
   } catch (err) {
     return res
@@ -183,7 +168,7 @@ exports.updateSupplier = async (req, res) => {
   }
 };
 
-// ── GET AP INVOICES (BILLS) ───────────────────────────────────
+// ── GET BILLS ─────────────────────────────────────────────────
 exports.getBills = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -269,12 +254,13 @@ exports.createBill = async (req, res) => {
       notes,
     } = req.body;
 
-    if (!supplier_id || !description || !invoice_date || !subtotal) {
-      return res.status(400).json({
-        error:
-          "supplier_id, description, invoice_date and subtotal are required",
-      });
-    }
+    if (!supplier_id || !description || !invoice_date || !subtotal)
+      return res
+        .status(400)
+        .json({
+          error:
+            "supplier_id, description, invoice_date and subtotal are required",
+        });
 
     const sup = await db.query(
       `SELECT id FROM ap_suppliers WHERE id = $1 AND company_id = $2`,
@@ -312,6 +298,7 @@ exports.createBill = async (req, res) => {
       ]
     );
 
+    // Auto-create input VAT transaction — VAT.RATE passed as JS param $5
     if (vat > 0) {
       const d = new Date(invoice_date);
       await client.query(
@@ -319,12 +306,13 @@ exports.createBill = async (req, res) => {
           (company_id, transaction_type, source_type, source_id, transaction_date,
            gross_amount, vat_rate, vat_amount, net_amount, description,
            vat_period_month, vat_period_year)
-         VALUES ($1,'input','ap_invoice',$2,$3,$4,VAT.RATE,$5,$6,$7,$8,$9)`,
+         VALUES ($1,'input','ap_invoice',$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           companyId,
           result.rows[0].id,
           d,
           total,
+          VAT.RATE,
           vat,
           sub,
           `Bill: ${description}`,
@@ -399,6 +387,7 @@ exports.payBill = async (req, res) => {
 
     const updatedBill = result.rows[0];
 
+    // Post cost to daily_revenue so P&L picks it up automatically
     if (newStatus === "paid") {
       try {
         await client.query(

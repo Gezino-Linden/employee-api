@@ -1,15 +1,8 @@
 // File: src/controllers/invoices.controller.js
 const cache = require("../utils/cache");
-const {
-  VAT,
-  GL_ACCOUNTS,
-  CACHE_TTL,
-  PAYMENT_METHODS,
-  MONTH_NAMES_SHORT,
-} = require("../config/constants");
+const { VAT, CACHE_TTL } = require("../config/constants");
 const db = require("../db");
 
-// ── HELPERS ──────────────────────────────────────────────────
 function toNum(v) {
   return parseFloat(v) || 0;
 }
@@ -22,16 +15,14 @@ async function generateInvoiceNumber(companyId) {
 
 async function recalcInvoice(client, invoiceId) {
   await client.query(
-    `
-    UPDATE invoices i
-    SET
-      subtotal     = COALESCE((SELECT SUM(line_total / (1 + vat_rate/100)) FROM invoice_line_items WHERE invoice_id = i.id), 0),
-      vat_amount   = COALESCE((SELECT SUM(vat_amount)  FROM invoice_line_items WHERE invoice_id = i.id), 0),
-      total_amount = COALESCE((SELECT SUM(line_total)  FROM invoice_line_items WHERE invoice_id = i.id), 0),
-      balance_due  = COALESCE((SELECT SUM(line_total)  FROM invoice_line_items WHERE invoice_id = i.id), 0) - amount_paid,
-      updated_at   = NOW()
-    WHERE id = $1
-  `,
+    `UPDATE invoices i
+     SET
+       subtotal     = COALESCE((SELECT SUM(line_total / (1 + vat_rate/100)) FROM invoice_line_items WHERE invoice_id = i.id), 0),
+       vat_amount   = COALESCE((SELECT SUM(vat_amount)  FROM invoice_line_items WHERE invoice_id = i.id), 0),
+       total_amount = COALESCE((SELECT SUM(line_total)  FROM invoice_line_items WHERE invoice_id = i.id), 0),
+       balance_due  = COALESCE((SELECT SUM(line_total)  FROM invoice_line_items WHERE invoice_id = i.id), 0) - amount_paid,
+       updated_at   = NOW()
+     WHERE id = $1`,
     [invoiceId]
   );
 }
@@ -80,7 +71,6 @@ exports.getInvoices = async (req, res) => {
     params.push(parseInt(per_page), offset);
 
     const result = await db.query(query, params);
-
     const countResult = await db.query(
       `SELECT COUNT(*) as total FROM invoices WHERE company_id = $1`,
       [companyId]
@@ -95,7 +85,6 @@ exports.getInvoices = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("getInvoices error:", err);
     return res
       .status(500)
       .json({ error: "Failed to fetch invoices", details: err.message });
@@ -137,7 +126,6 @@ exports.getInvoice = async (req, res) => {
       payments: payments.rows,
     });
   } catch (err) {
-    console.error("getInvoice error:", err);
     return res
       .status(500)
       .json({ error: "Failed to fetch invoice", details: err.message });
@@ -176,8 +164,7 @@ exports.createInvoice = async (req, res) => {
         (company_id, invoice_number, invoice_type, guest_name, guest_email, guest_phone,
          company_name, invoice_date, due_date, check_in_date, check_out_date,
          property_id, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-       RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
       [
         companyId,
         invoiceNumber,
@@ -198,11 +185,10 @@ exports.createInvoice = async (req, res) => {
 
     const invoiceId = inv.rows[0].id;
 
-    // Insert line items if provided
     for (const item of line_items) {
       const qty = toNum(item.quantity) || 1;
       const price = toNum(item.unit_price);
-      const vatRate = toNum(item.vat_rate ?? VAT.RATE);
+      const vatRate = toNum(item.vat_rate ?? VAT.RATE); // JS value, not in SQL string
       const vatAmt = price * qty * (vatRate / 100);
       const total = price * qty + vatAmt;
 
@@ -225,7 +211,6 @@ exports.createInvoice = async (req, res) => {
     }
 
     await recalcInvoice(client, invoiceId);
-
     const final = await client.query(`SELECT * FROM invoices WHERE id = $1`, [
       invoiceId,
     ]);
@@ -256,7 +241,7 @@ exports.addLineItem = async (req, res) => {
       description,
       quantity = 1,
       unit_price,
-      vat_rate = VAT.RATE,
+      vat_rate,
       service_date,
     } = req.body;
 
@@ -265,7 +250,6 @@ exports.addLineItem = async (req, res) => {
         .status(400)
         .json({ error: "description and unit_price are required" });
 
-    // Verify ownership
     const check = await client.query(
       `SELECT id, status FROM invoices WHERE id = $1 AND company_id = $2`,
       [invoiceId, companyId]
@@ -279,7 +263,7 @@ exports.addLineItem = async (req, res) => {
 
     const qty = toNum(quantity);
     const price = toNum(unit_price);
-    const vatRate = toNum(vat_rate);
+    const vatRate = toNum(vat_rate ?? VAT.RATE); // JS value
     const vatAmt = price * qty * (vatRate / 100);
     const total = price * qty + vatAmt;
 
@@ -311,7 +295,6 @@ exports.addLineItem = async (req, res) => {
       .json({ line_item: line.rows[0], invoice: updated.rows[0] });
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("addLineItem error:", err);
     return res
       .status(500)
       .json({ error: "Failed to add line item", details: err.message });
@@ -404,8 +387,10 @@ exports.recordPayment = async (req, res) => {
 
     await client.query("BEGIN");
 
+    // 1. Insert payment record
     const payment = await client.query(
-      `INSERT INTO ar_payments (company_id, invoice_id, amount, payment_date, payment_method, reference, notes, recorded_by)
+      `INSERT INTO ar_payments
+         (company_id, invoice_id, amount, payment_date, payment_method, reference, notes, recorded_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [
         companyId,
@@ -419,7 +404,7 @@ exports.recordPayment = async (req, res) => {
       ]
     );
 
-    // Update invoice amounts paid + status
+    // 2. Update invoice totals + status
     const totalPaid = toNum(inv.rows[0].amount_paid) + toNum(amount);
     const totalAmount = toNum(inv.rows[0].total_amount);
     const newStatus =
@@ -437,39 +422,116 @@ exports.recordPayment = async (req, res) => {
       [totalPaid, balanceDue, newStatus, payment_method, invoiceId]
     );
 
-    // Auto-create VAT transaction for output VAT
+    const invoice = updated.rows[0];
+
+    // 3. Auto-post output VAT transaction (only when fully paid)
     if (newStatus === "paid") {
       const d = new Date(payment_date || new Date());
       await client.query(
         `INSERT INTO vat_transactions
-          (company_id, transaction_type, source_type, source_id, transaction_date,
-           gross_amount, vat_rate, vat_amount, net_amount, description, reference,
-           vat_period_month, vat_period_year)
-         VALUES ($1,'output','invoice',$2,$3,$4,VAT.RATE,$5,$6,$7,$8,$9,$10)
+           (company_id, transaction_type, source_type, source_id, transaction_date,
+            gross_amount, vat_rate, vat_amount, net_amount, description, reference,
+            vat_period_month, vat_period_year)
+         VALUES ($1,'output','invoice',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          ON CONFLICT DO NOTHING`,
         [
           companyId,
           invoiceId,
           d,
-          toNum(updated.rows[0].total_amount),
-          toNum(updated.rows[0].vat_amount),
-          toNum(updated.rows[0].subtotal),
-          `Invoice ${updated.rows[0].invoice_number}`,
-          updated.rows[0].invoice_number,
+          toNum(invoice.total_amount),
+          VAT.RATE, // VAT.RATE as JS param $5
+          toNum(invoice.vat_amount),
+          toNum(invoice.subtotal),
+          `Invoice ${invoice.invoice_number}`,
+          invoice.invoice_number,
           d.getMonth() + 1,
           d.getFullYear(),
         ]
       );
+
+      // 4. Auto-post revenue to daily_revenue broken down by line item categories
+      try {
+        const lines = await client.query(
+          `SELECT il.line_total, il.vat_amount, rc.code as cat_code
+           FROM invoice_line_items il
+           LEFT JOIN revenue_categories rc ON il.category_id = rc.id
+           WHERE il.invoice_id = $1`,
+          [invoiceId]
+        );
+
+        let rooms = 0,
+          fb = 0,
+          spa = 0,
+          events = 0,
+          other = 0;
+
+        if (lines.rows.length > 0) {
+          for (const line of lines.rows) {
+            const net = toNum(line.line_total) - toNum(line.vat_amount);
+            const code = (line.cat_code || "").toLowerCase();
+            if (code.includes("room")) rooms += net;
+            else if (
+              code.includes("fb") ||
+              code.includes("food") ||
+              code.includes("bev")
+            )
+              fb += net;
+            else if (code.includes("spa")) spa += net;
+            else if (code.includes("event")) events += net;
+            else other += net;
+          }
+        } else {
+          other = toNum(invoice.subtotal);
+        }
+
+        const pDate = payment_date
+          ? new Date(payment_date).toISOString().split("T")[0]
+          : new Date().toISOString().split("T")[0];
+
+        await client.query(
+          `INSERT INTO daily_revenue
+             (company_id, property_id, revenue_date,
+              rooms_revenue, fb_revenue, spa_revenue, events_revenue, other_revenue,
+              total_revenue, total_vat, rooms_available, rooms_occupied, occupancy_rate,
+              total_costs, notes, status, recorded_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8, $4+$5+$6+$7+$8, $9, 0,0,0,0,
+                   'Auto: Invoice '||$10,'approved',$11)
+           ON CONFLICT (company_id, revenue_date, property_id)
+           DO UPDATE SET
+             rooms_revenue  = daily_revenue.rooms_revenue  + EXCLUDED.rooms_revenue,
+             fb_revenue     = daily_revenue.fb_revenue     + EXCLUDED.fb_revenue,
+             spa_revenue    = daily_revenue.spa_revenue    + EXCLUDED.spa_revenue,
+             events_revenue = daily_revenue.events_revenue + EXCLUDED.events_revenue,
+             other_revenue  = daily_revenue.other_revenue  + EXCLUDED.other_revenue,
+             total_revenue  = daily_revenue.total_revenue  + EXCLUDED.total_revenue,
+             total_vat      = daily_revenue.total_vat      + EXCLUDED.total_vat,
+             updated_at     = NOW()`,
+          [
+            companyId,
+            invoice.property_id || null,
+            pDate,
+            rooms,
+            fb,
+            spa,
+            events,
+            other,
+            toNum(invoice.vat_amount),
+            invoice.invoice_number,
+            req.user.id,
+          ]
+        );
+      } catch (revErr) {
+        console.warn("daily_revenue auto-post skipped:", revErr.message);
+      }
     }
 
     await client.query("COMMIT");
-    return res
-      .status(201)
-      .json({
-        message: "Payment recorded",
-        payment: payment.rows[0],
-        invoice: updated.rows[0],
-      });
+    return res.status(201).json({
+      message: "Payment recorded",
+      payment: payment.rows[0],
+      invoice: invoice,
+      revenue_posted: newStatus === "paid",
+    });
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("recordPayment error:", err);
@@ -501,7 +563,6 @@ exports.getCategories = async (req, res) => {
   }
 };
 
-
 // ── AR SUMMARY ────────────────────────────────────────────────
 exports.getARSummary = async (req, res) => {
   try {
@@ -526,173 +587,5 @@ exports.getARSummary = async (req, res) => {
     return res
       .status(500)
       .json({ error: "Failed to fetch AR summary", details: err.message });
-  }
-};
-// ── RECORD PAYMENT  (replace the existing recordPayment export)
-// Now also auto-posts to daily_revenue so P&L picks it up immediately
-// ─────────────────────────────────────────────────────────────────────
-exports.recordPayment = async (req, res) => {
-  const client = await db.connect();
-  try {
-    const companyId  = req.user?.company_id;
-    const invoiceId  = parseInt(req.params.id);
-    const { amount, payment_date, payment_method, reference, notes } = req.body;
-
-    if (!amount || !payment_method)
-      return res
-        .status(400)
-        .json({ error: "amount and payment_method are required" });
-
-    const inv = await client.query(
-      `SELECT * FROM invoices WHERE id = $1 AND company_id = $2`,
-      [invoiceId, companyId]
-    );
-    if (inv.rows.length === 0)
-      return res.status(404).json({ error: "Invoice not found" });
-    if (inv.rows[0].status === "cancelled")
-      return res.status(400).json({ error: "Cannot pay a cancelled invoice" });
-
-    await client.query("BEGIN");
-
-    // 1. Insert ar_payments record
-    const payment = await client.query(
-      `INSERT INTO ar_payments
-         (company_id, invoice_id, amount, payment_date, payment_method, reference, notes, recorded_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [
-        companyId, invoiceId, toNum(amount),
-        payment_date || new Date(),
-        payment_method, reference, notes, req.user.id,
-      ]
-    );
-
-    // 2. Update invoice totals + status
-    const totalPaid   = toNum(inv.rows[0].amount_paid) + toNum(amount);
-    const totalAmount = toNum(inv.rows[0].total_amount);
-    const newStatus   =
-      totalPaid >= totalAmount ? "paid"
-      : totalPaid > 0          ? "partial"
-      :                          inv.rows[0].status;
-    const balanceDue  = Math.max(0, totalAmount - totalPaid);
-
-    const updated = await client.query(
-      `UPDATE invoices
-       SET amount_paid = $1, balance_due = $2, status = $3,
-           payment_method = $4, updated_at = NOW()
-       WHERE id = $5 RETURNING *`,
-      [totalPaid, balanceDue, newStatus, payment_method, invoiceId]
-    );
-
-    const invoice = updated.rows[0];
-
-    // 3. AUTO-POST OUTPUT VAT TRANSACTION (only when fully paid)
-    if (newStatus === "paid") {
-      const d = new Date(payment_date || new Date());
-      await client.query(
-        `INSERT INTO vat_transactions
-           (company_id, transaction_type, source_type, source_id, transaction_date,
-            gross_amount, vat_rate, vat_amount, net_amount, description, reference,
-            vat_period_month, vat_period_year)
-         VALUES ($1,'output','invoice',$2,$3,$4,VAT.RATE,$5,$6,$7,$8,$9,$10)
-         ON CONFLICT DO NOTHING`,
-        [
-          companyId,
-          invoiceId,
-          d,
-          toNum(invoice.total_amount),
-          toNum(invoice.vat_amount),
-          toNum(invoice.subtotal),
-          `Invoice ${invoice.invoice_number}`,
-          invoice.invoice_number,
-          d.getMonth() + 1,
-          d.getFullYear(),
-        ]
-      );
-
-      // 4. AUTO-POST TO daily_revenue
-      //    Breaks the invoice total into revenue streams based on line items
-      //    If no line items present, posts the whole amount to 'other_revenue'
-      try {
-        const lines = await client.query(
-          `SELECT il.line_total, il.vat_amount, rc.code as cat_code
-           FROM invoice_line_items il
-           LEFT JOIN revenue_categories rc ON il.category_id = rc.id
-           WHERE il.invoice_id = $1`,
-          [invoiceId]
-        );
-
-        let rooms = 0, fb = 0, spa = 0, events = 0, other = 0;
-
-        if (lines.rows.length > 0) {
-          for (const line of lines.rows) {
-            const net = toNum(line.line_total) - toNum(line.vat_amount);
-            const code = (line.cat_code || "").toLowerCase();
-            if      (code.includes("room"))   rooms  += net;
-            else if (code.includes("fb") || code.includes("food") || code.includes("bev")) fb += net;
-            else if (code.includes("spa"))    spa    += net;
-            else if (code.includes("event"))  events += net;
-            else                              other  += net;
-          }
-        } else {
-          other = toNum(invoice.subtotal);
-        }
-
-        const pDate = payment_date
-          ? new Date(payment_date).toISOString().split("T")[0]
-          : new Date().toISOString().split("T")[0];
-
-        await client.query(
-          `INSERT INTO daily_revenue
-             (company_id, property_id, revenue_date,
-              rooms_revenue, fb_revenue, spa_revenue, events_revenue, other_revenue,
-              total_revenue, total_vat, rooms_available, rooms_occupied, occupancy_rate,
-              total_costs, notes, status, recorded_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
-                   $4+$5+$6+$7+$8,          -- total_revenue
-                   $9,                        -- total_vat
-                   0,0,0,0,                   -- rooms stats (unknown from invoice)
-                   $10,'Auto: Invoice '||$11,'approved',$12)
-           ON CONFLICT (company_id, revenue_date, property_id)
-           DO UPDATE SET
-             rooms_revenue  = daily_revenue.rooms_revenue  + EXCLUDED.rooms_revenue,
-             fb_revenue     = daily_revenue.fb_revenue     + EXCLUDED.fb_revenue,
-             spa_revenue    = daily_revenue.spa_revenue    + EXCLUDED.spa_revenue,
-             events_revenue = daily_revenue.events_revenue + EXCLUDED.events_revenue,
-             other_revenue  = daily_revenue.other_revenue  + EXCLUDED.other_revenue,
-             total_revenue  = daily_revenue.total_revenue  + EXCLUDED.total_revenue,
-             total_vat      = daily_revenue.total_vat      + EXCLUDED.total_vat,
-             updated_at     = NOW()`,
-          [
-            companyId,
-            invoice.property_id || null,
-            pDate,
-            rooms, fb, spa, events, other,
-            toNum(invoice.vat_amount),
-            0,                          // total_costs — AP side handles this
-            invoice.invoice_number,
-            req.user.id,
-          ]
-        );
-      } catch (revErr) {
-        // Non-fatal — VAT transaction already posted, don't roll back
-        console.warn("daily_revenue auto-post skipped:", revErr.message);
-      }
-    }
-
-    await client.query("COMMIT");
-    return res.status(201).json({
-      message: "Payment recorded",
-      payment: payment.rows[0],
-      invoice: invoice,
-      revenue_posted: newStatus === "paid",
-    });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("recordPayment error:", err);
-    return res
-      .status(500)
-      .json({ error: "Failed to record payment", details: err.message });
-  } finally {
-    client.release();
   }
 };
