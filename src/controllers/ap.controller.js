@@ -320,13 +320,14 @@ exports.createBill = async (req, res) => {
 };
 
 // ── PAY BILL ──────────────────────────────────────────────────
+// ── PAY BILL (patched) ────────────────────────────────────────
+// Replace the existing payBill export in ap.controller.js
 exports.payBill = async (req, res) => {
   const client = await db.connect();
   try {
     const companyId = req.user?.company_id;
     const { id } = req.params;
-    const { payment_date, payment_method, payment_reference, amount } =
-      req.body;
+    const { payment_date, payment_method, payment_reference, amount } = req.body;
 
     if (!payment_method)
       return res.status(400).json({ error: "payment_method is required" });
@@ -342,30 +343,60 @@ exports.payBill = async (req, res) => {
 
     await client.query("BEGIN");
 
-    const paid = toNum(amount) || toNum(bill.rows[0].balance_due);
+    const paid      = toNum(amount) || toNum(bill.rows[0].balance_due);
     const totalPaid = toNum(bill.rows[0].amount_paid) + paid;
-    const balance = Math.max(0, toNum(bill.rows[0].total_amount) - totalPaid);
-    const status = balance <= 0 ? "paid" : "pending";
+    const balance   = Math.max(0, toNum(bill.rows[0].total_amount) - totalPaid);
+    const newStatus = balance <= 0 ? "paid" : "pending";
+    const pDate     = payment_date
+      ? new Date(payment_date).toISOString().split("T")[0]
+      : new Date().toISOString().split("T")[0];
 
+    // 1. Update bill record
     const result = await client.query(
       `UPDATE ap_invoices SET
         status = $1, amount_paid = $2, balance_due = $3,
         payment_date = $4, payment_method = $5, payment_reference = $6, updated_at = NOW()
        WHERE id = $7 AND company_id = $8 RETURNING *`,
-      [
-        status,
-        totalPaid,
-        balance,
-        payment_date || new Date(),
-        payment_method,
-        payment_reference,
-        id,
-        companyId,
-      ]
+      [newStatus, totalPaid, balance, pDate, payment_method, payment_reference, id, companyId]
     );
 
+    const updatedBill = result.rows[0];
+
+    // 2. Post cost to daily_revenue so P&L picks it up automatically
+    //    Uses UPSERT — adds to existing day entry or creates one
+    if (newStatus === "paid") {
+      try {
+        await client.query(
+          `INSERT INTO daily_revenue
+             (company_id, property_id, revenue_date,
+              rooms_revenue, fb_revenue, spa_revenue, events_revenue, other_revenue,
+              total_revenue, total_vat, rooms_available, rooms_occupied, occupancy_rate,
+              total_costs, notes, status, recorded_by)
+           VALUES ($1, NULL, $2, 0,0,0,0,0, 0,0, 0,0,0, $3, $4, 'approved', $5)
+           ON CONFLICT (company_id, revenue_date, property_id)
+           DO UPDATE SET
+             total_costs = daily_revenue.total_costs + EXCLUDED.total_costs,
+             updated_at  = NOW()`,
+          [
+            companyId,
+            pDate,
+            toNum(updatedBill.total_amount),
+            `Auto: Bill payment ${updatedBill.supplier_invoice_no || id}`,
+            req.user.id,
+          ]
+        );
+      } catch (costErr) {
+        // Non-fatal — log but don't roll back the payment
+        console.warn("daily_revenue cost post skipped:", costErr.message);
+      }
+    }
+
     await client.query("COMMIT");
-    return res.json({ message: "Bill payment recorded", bill: result.rows[0] });
+    return res.json({
+      message: "Bill payment recorded",
+      bill: updatedBill,
+      cost_posted: newStatus === "paid",
+    });
   } catch (err) {
     await client.query("ROLLBACK");
     return res
