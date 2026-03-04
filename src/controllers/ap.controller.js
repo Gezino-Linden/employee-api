@@ -1,14 +1,19 @@
 // File: src/controllers/ap.controller.js
 const cache = require("../utils/cache");
+const {
+  VAT,
+  GL_ACCOUNTS,
+  CACHE_TTL,
+  PAYMENT_METHODS,
+  MONTH_NAMES_SHORT,
+} = require("../config/constants");
 const db = require("../db");
 
 function toNum(v) {
   return parseFloat(v) || 0;
 }
 
-const CACHE_TTL = {
-  SUPPLIERS: 180, // 3 minutes
-};
+
 
 // ── GET SUPPLIERS ─────────────────────────────────────────────
 exports.getSuppliers = async (req, res) => {
@@ -314,7 +319,7 @@ exports.createBill = async (req, res) => {
           (company_id, transaction_type, source_type, source_id, transaction_date,
            gross_amount, vat_rate, vat_amount, net_amount, description,
            vat_period_month, vat_period_year)
-         VALUES ($1,'input','ap_invoice',$2,$3,$4,15,$5,$6,$7,$8,$9)`,
+         VALUES ($1,'input','ap_invoice',$2,$3,$4,VAT.RATE,$5,$6,$7,$8,$9)`,
         [
           companyId,
           result.rows[0].id,

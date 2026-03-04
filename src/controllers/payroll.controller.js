@@ -1,13 +1,21 @@
 // File: src/controllers/payroll.controller.js
 const PDFDocument = require("pdfkit");
+const {
+  VAT,
+  GL_ACCOUNTS,
+  CACHE_TTL,
+  PAYMENT_METHODS,
+  PAYROLL_STATUSES,
+  MONTH_NAMES_SHORT,
+} = require("../config/constants");
 const db = require("../db");
 
 // =====================================================
 // VALIDATION HELPERS
 // =====================================================
 const VALID_MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
-const VALID_PAYMENT_METHODS = ["bank_transfer", "cash", "check", "crypto"];
-const VALID_STATUSES = ["draft", "processed", "paid"];
+const VALID_PAYMENT_METHODS = PAYMENT_METHODS;
+const VALID_STATUSES = PAYROLL_STATUSES;
 
 function toInt(value, fallback) {
   const n = parseInt(value, 10);
@@ -54,9 +62,9 @@ function calculateTax(grossPay, age = 30) {
     annualTax = 644489 + (annualGross - 1817000) * 0.45;
   }
 
-  const PRIMARY_REBATE = 17235;
-  const SECONDARY_REBATE = 9444;
-  const TERTIARY_REBATE = 3145;
+  const PRIMARY_REBATE = TAX.PRIMARY_REBATE;
+  const SECONDARY_REBATE = TAX.SECONDARY_REBATE;
+  const TERTIARY_REBATE = TAX.TERTIARY_REBATE;
 
   if (age < 65) {
     annualTax -= PRIMARY_REBATE;
@@ -66,9 +74,9 @@ function calculateTax(grossPay, age = 30) {
     annualTax -= PRIMARY_REBATE + SECONDARY_REBATE + TERTIARY_REBATE;
   }
 
-  const TAX_THRESHOLD_UNDER_65 = 95750;
-  const TAX_THRESHOLD_65_TO_74 = 148217;
-  const TAX_THRESHOLD_75_PLUS = 165689;
+  const TAX_THRESHOLD_UNDER_65 = TAX.THRESHOLD_UNDER_65;
+  const TAX_THRESHOLD_65_TO_74 = TAX.THRESHOLD_65_TO_74;
+  const TAX_THRESHOLD_75_PLUS = TAX.THRESHOLD_75_PLUS;
 
   let threshold = TAX_THRESHOLD_UNDER_65;
   if (age >= 75) threshold = TAX_THRESHOLD_75_PLUS;
@@ -803,20 +811,7 @@ function calculateNightHours(clockIn, clockOut) {
 
 async function checkPublicHoliday(date) {
   try {
-    const publicHolidays2026 = [
-      "2026-01-01",
-      "2026-03-21",
-      "2026-04-10",
-      "2026-04-13",
-      "2026-04-27",
-      "2026-05-01",
-      "2026-06-16",
-      "2026-08-09",
-      "2026-09-24",
-      "2026-12-16",
-      "2026-12-25",
-      "2026-12-26",
-    ];
+    const publicHolidays2026 = DATE.PUBLIC_HOLIDAYS_2026;
     const dateStr =
       typeof date === "string" ? date : date.toISOString().split("T")[0];
     return publicHolidays2026.includes(dateStr);

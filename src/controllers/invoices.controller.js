@@ -1,5 +1,12 @@
 // File: src/controllers/invoices.controller.js
 const cache = require("../utils/cache");
+const {
+  VAT,
+  GL_ACCOUNTS,
+  CACHE_TTL,
+  PAYMENT_METHODS,
+  MONTH_NAMES_SHORT,
+} = require("../config/constants");
 const db = require("../db");
 
 // ── HELPERS ──────────────────────────────────────────────────
@@ -195,7 +202,7 @@ exports.createInvoice = async (req, res) => {
     for (const item of line_items) {
       const qty = toNum(item.quantity) || 1;
       const price = toNum(item.unit_price);
-      const vatRate = toNum(item.vat_rate ?? 15);
+      const vatRate = toNum(item.vat_rate ?? VAT.RATE);
       const vatAmt = price * qty * (vatRate / 100);
       const total = price * qty + vatAmt;
 
@@ -249,7 +256,7 @@ exports.addLineItem = async (req, res) => {
       description,
       quantity = 1,
       unit_price,
-      vat_rate = 15,
+      vat_rate = VAT.RATE,
       service_date,
     } = req.body;
 
@@ -438,7 +445,7 @@ exports.recordPayment = async (req, res) => {
           (company_id, transaction_type, source_type, source_id, transaction_date,
            gross_amount, vat_rate, vat_amount, net_amount, description, reference,
            vat_period_month, vat_period_year)
-         VALUES ($1,'output','invoice',$2,$3,$4,15,$5,$6,$7,$8,$9,$10)
+         VALUES ($1,'output','invoice',$2,$3,$4,VAT.RATE,$5,$6,$7,$8,$9,$10)
          ON CONFLICT DO NOTHING`,
         [
           companyId,
@@ -586,10 +593,12 @@ exports.recordPayment = async (req, res) => {
            (company_id, transaction_type, source_type, source_id, transaction_date,
             gross_amount, vat_rate, vat_amount, net_amount, description, reference,
             vat_period_month, vat_period_year)
-         VALUES ($1,'output','invoice',$2,$3,$4,15,$5,$6,$7,$8,$9,$10)
+         VALUES ($1,'output','invoice',$2,$3,$4,VAT.RATE,$5,$6,$7,$8,$9,$10)
          ON CONFLICT DO NOTHING`,
         [
-          companyId, invoiceId, d,
+          companyId,
+          invoiceId,
+          d,
           toNum(invoice.total_amount),
           toNum(invoice.vat_amount),
           toNum(invoice.subtotal),

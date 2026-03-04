@@ -1,15 +1,17 @@
 // File: src/controllers/accounting.controller.js
 const db = require("../db");
 const cache = require("../utils/cache");
+const {
+  VAT,
+  GL_ACCOUNTS,
+  CACHE_TTL,
+  MONTH_NAMES,
+  MONTH_NAMES_SHORT,
+} = require("../config/constants");
 
 function toNum(v) {
   return parseFloat(v) || 0;
 }
-
-const CACHE_TTL = {
-  ACCOUNTS: 600, // 10 minutes — chart of accounts rarely changes
-  MAPPINGS: 600, // 10 minutes — GL mappings rarely change
-};
 
 // ── GET CHART OF ACCOUNTS ─────────────────────────────────────
 exports.getAccounts = async (req, res) => {
@@ -49,9 +51,9 @@ exports.getPeriods = async (req, res) => {
     const result = await db.query(
       `SELECT
          id,
-         MAKE_DATE(year, month, 1)                       AS period_start,
+         MAKE_DATE(year, month, 1)                     AS period_start,
          (MAKE_DATE(year, month, 1)
-           + INTERVAL '1 month - 1 day')::date           AS period_end,
+           + INTERVAL '1 month - 1 day')::date         AS period_end,
          status,
          total_employees,
          total_gross
@@ -115,30 +117,27 @@ exports.getMappings = async (req, res) => {
 exports.generateJournal = async (req, res) => {
   const { payroll_period_id, type = "standard", property_id } = req.body;
 
-  if (!payroll_period_id) {
+  if (!payroll_period_id)
     return res
       .status(400)
       .json({ success: false, error: "payroll_period_id is required" });
-  }
-  if (!["standard", "hospitality"].includes(type)) {
+  if (!["standard", "hospitality"].includes(type))
     return res
       .status(400)
       .json({
         success: false,
         error: 'type must be "standard" or "hospitality"',
       });
-  }
 
   try {
     const periodCheck = await db.query(
       "SELECT id, period_start, period_end FROM payroll_periods WHERE id = $1",
       [payroll_period_id]
     );
-    if (periodCheck.rows.length === 0) {
+    if (periodCheck.rows.length === 0)
       return res
         .status(404)
         .json({ success: false, error: "Payroll period not found" });
-    }
 
     const period = periodCheck.rows[0];
 
@@ -161,11 +160,10 @@ exports.generateJournal = async (req, res) => {
     }
 
     const payrollData = await db.query(payrollQuery, queryParams);
-    if (payrollData.rows.length === 0) {
+    if (payrollData.rows.length === 0)
       return res
         .status(404)
         .json({ success: false, error: "No payroll data found" });
-    }
 
     let totalGross = 0,
       totalTax = 0,
@@ -195,7 +193,7 @@ exports.generateJournal = async (req, res) => {
     const journalLines = [
       {
         line: 1,
-        account_code: "6100",
+        account_code: GL_ACCOUNTS.SALARIES_WAGES,
         account_name: "Salaries & Wages",
         debit: totalGross,
         credit: 0,
@@ -203,7 +201,7 @@ exports.generateJournal = async (req, res) => {
       },
       {
         line: 2,
-        account_code: "2100",
+        account_code: GL_ACCOUNTS.SARS_PAYE_LIABILITY,
         account_name: "SARS PAYE Liability",
         debit: 0,
         credit: totalTax,
@@ -211,7 +209,7 @@ exports.generateJournal = async (req, res) => {
       },
       {
         line: 3,
-        account_code: "2110",
+        account_code: GL_ACCOUNTS.PENSION_LIABILITY,
         account_name: "Pension Liability",
         debit: 0,
         credit: totalPension,
@@ -219,7 +217,7 @@ exports.generateJournal = async (req, res) => {
       },
       {
         line: 4,
-        account_code: "2130",
+        account_code: GL_ACCOUNTS.UIF_LIABILITY,
         account_name: "UIF Liability",
         debit: 0,
         credit: totalUIF,
@@ -227,7 +225,7 @@ exports.generateJournal = async (req, res) => {
       },
       {
         line: 5,
-        account_code: "2150",
+        account_code: GL_ACCOUNTS.NET_SALARIES_PAYABLE,
         account_name: "Net Salaries Payable",
         debit: 0,
         credit: totalNet,
@@ -275,7 +273,7 @@ exports.generateJournal = async (req, res) => {
       if (totalTipsCash > 0)
         journalLines.push({
           line: 6,
-          account_code: "6210",
+          account_code: GL_ACCOUNTS.TIPS_CASH,
           account_name: "Tips Collected - Cash",
           debit: 0,
           credit: totalTipsCash,
@@ -284,7 +282,7 @@ exports.generateJournal = async (req, res) => {
       if (totalTipsCard > 0)
         journalLines.push({
           line: 7,
-          account_code: "6215",
+          account_code: GL_ACCOUNTS.TIPS_CARD,
           account_name: "Tips Collected - Card",
           debit: 0,
           credit: totalTipsCard,
@@ -293,7 +291,7 @@ exports.generateJournal = async (req, res) => {
       if (totalServiceCharge > 0)
         journalLines.push({
           line: 8,
-          account_code: "6200",
+          account_code: GL_ACCOUNTS.SERVICE_CHARGES,
           account_name: "Service Charges Collected",
           debit: 0,
           credit: totalServiceCharge,
@@ -350,11 +348,11 @@ exports.exportJournal = async (req, res) => {
     const result = await db.query(
       `SELECT
         pp.period_start, pp.period_end,
-        SUM(pr.gross_salary)       as total_gross,
-        SUM(pr.paye_tax)           as total_tax,
-        SUM(pr.pension_employee)   as total_pension,
-        SUM(pr.uif_employee)       as total_uif,
-        SUM(pr.net_salary)         as total_net
+        SUM(pr.gross_salary)     as total_gross,
+        SUM(pr.paye_tax)         as total_tax,
+        SUM(pr.pension_employee) as total_pension,
+        SUM(pr.uif_employee)     as total_uif,
+        SUM(pr.net_salary)       as total_net
        FROM payroll_records pr
        JOIN payroll_periods pp ON pr.payroll_period_id = pp.id
        WHERE pp.id = $1
@@ -369,15 +367,15 @@ exports.exportJournal = async (req, res) => {
       const date = row.period_end.toISOString().split("T")[0];
       const ref = `PAYROLL-${type}-${payroll_period_id}`;
       let csv = "Date,Reference,Account Code,Account Name,Debit,Credit\n";
-      csv += `${date},${ref},6100,Salaries & Wages,${row.total_gross},0\n`;
-      csv += `${date},${ref},2100,SARS PAYE Liability,0,${row.total_tax}\n`;
-      csv += `${date},${ref},2110,Pension Liability,0,${row.total_pension}\n`;
-      csv += `${date},${ref},2130,UIF Liability,0,${row.total_uif}\n`;
-      csv += `${date},${ref},2150,Net Salaries Payable,0,${row.total_net}\n`;
+      csv += `${date},${ref},${GL_ACCOUNTS.SALARIES_WAGES},Salaries & Wages,${row.total_gross},0\n`;
+      csv += `${date},${ref},${GL_ACCOUNTS.SARS_PAYE_LIABILITY},SARS PAYE Liability,0,${row.total_tax}\n`;
+      csv += `${date},${ref},${GL_ACCOUNTS.PENSION_LIABILITY},Pension Liability,0,${row.total_pension}\n`;
+      csv += `${date},${ref},${GL_ACCOUNTS.UIF_LIABILITY},UIF Liability,0,${row.total_uif}\n`;
+      csv += `${date},${ref},${GL_ACCOUNTS.NET_SALARIES_PAYABLE},Net Salaries Payable,0,${row.total_net}\n`;
       if (type === "hospitality") {
-        csv += `${date},${ref},6210,Tips Collected - Cash,0,0\n`;
-        csv += `${date},${ref},6215,Tips Collected - Card,0,0\n`;
-        csv += `${date},${ref},6200,Service Charges Collected,0,0\n`;
+        csv += `${date},${ref},${GL_ACCOUNTS.TIPS_CASH},Tips Collected - Cash,0,0\n`;
+        csv += `${date},${ref},${GL_ACCOUNTS.TIPS_CARD},Tips Collected - Card,0,0\n`;
+        csv += `${date},${ref},${GL_ACCOUNTS.SERVICE_CHARGES},Service Charges Collected,0,0\n`;
       }
       res.setHeader("Content-Type", "text/csv");
       res.setHeader("Content-Disposition", `attachment; filename=${ref}.csv`);
@@ -540,25 +538,10 @@ exports.getVATReturn = async (req, res) => {
     const inputVat = toNum(input.rows[0].vat) || toNum(apVat.rows[0].vat);
     const vatPayable = outputVat - inputVat;
 
-    const monthNames = [
-      "January",
-      "February",
-      "March",
-      "April",
-      "May",
-      "June",
-      "July",
-      "August",
-      "September",
-      "October",
-      "November",
-      "December",
-    ];
-
     return res.json({
       success: true,
       data: {
-        period: { month: m, year: y, label: `${monthNames[m - 1]} ${y}` },
+        period: { month: m, year: y, label: `${MONTH_NAMES[m - 1]} ${y}` },
         output_vat: {
           gross: toNum(output.rows[0].gross),
           vat: outputVat,
@@ -577,7 +560,7 @@ exports.getVATReturn = async (req, res) => {
           vat_payable: vatPayable > 0 ? vatPayable : 0,
           vat_refundable: vatPayable < 0 ? Math.abs(vatPayable) : 0,
           is_refund: vatPayable < 0,
-          vat_rate: 15,
+          vat_rate: VAT.RATE,
         },
       },
     });
@@ -758,31 +741,19 @@ exports.closePeriod = async (req, res) => {
     );
 
     if (vatPayable > 0) {
-      const monthNames = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
       try {
         await client.query(
           `INSERT INTO gl_journal_lines
              (company_id, journal_date, reference, account_code, account_name,
               debit, credit, category, source_type, source_id, created_by)
            VALUES
-             ($1,NOW(),$2,'2200','VAT Control Account', $3, 0,  'vat','period_close',$4,$5),
-             ($1,NOW(),$2,'2210','SARS VAT Payable',     0, $3, 'vat','period_close',$4,$5)`,
+             ($1,NOW(),$2,$3,'VAT Control Account', $5, 0,  'vat','period_close',$6,$7),
+             ($1,NOW(),$2,$4,'SARS VAT Payable',     0, $5, 'vat','period_close',$6,$7)`,
           [
             companyId,
-            `VAT-CLOSE-${monthNames[m - 1]}-${y}`,
+            `VAT-CLOSE-${MONTH_NAMES_SHORT[m - 1]}-${y}`,
+            GL_ACCOUNTS.VAT_CONTROL,
+            GL_ACCOUNTS.SARS_VAT_PAYABLE,
             vatPayable,
             period.rows[0].id,
             req.user.id,
@@ -793,7 +764,6 @@ exports.closePeriod = async (req, res) => {
       }
     }
 
-    // Invalidate accounts and mappings cache after period close
     cache.del(`accounts:${companyId}`);
     cache.del(`mappings:${companyId}`);
 
