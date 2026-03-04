@@ -1,49 +1,12 @@
-// File: src/routes/accounting.routes.js
 const express = require("express");
 const router = express.Router();
 const c = require("../controllers/accounting.controller");
 const { requireAuth, requireRoles } = require("../middleware");
+const { validate, accountingValidators } = require("../middleware/validate");
 
-// ── Chart of Accounts ─────────────────────────────────────────
 router.get("/accounts", requireAuth, c.getAccounts);
-
-// ── Payroll Periods (for journal generator dropdown) ──────────
 router.get("/periods", requireAuth, c.getPeriods);
-
-// ── GL Mappings ───────────────────────────────────────────────
 router.get("/mappings", requireAuth, c.getMappings);
-
-// ── Journal Generation ────────────────────────────────────────
-router.post(
-  "/journal/generate",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  c.generateJournal
-);
-
-// ── Journal Export ────────────────────────────────────────────
-router.get(
-  "/export/:format",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  c.exportJournal
-);
-
-// ── P&L Report ────────────────────────────────────────────────
-// Query params: from (YYYY-MM-DD), to (YYYY-MM-DD), property_id (optional)
-router.get("/pl", requireAuth, requireRoles("admin", "manager"), c.getPL);
-
-// ── VAT Return ────────────────────────────────────────────────
-// Query params: month (1-12), year (YYYY)
-router.get(
-  "/vat/return",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  c.getVATReturn
-);
-
-// ── VAT Transactions List ─────────────────────────────────────
-// Query params: type (output|input), month, year
 router.get(
   "/vat/transactions",
   requireAuth,
@@ -51,9 +14,43 @@ router.get(
   c.getVATTransactions
 );
 
-// ── Month-End Close  ◄── NEW ──────────────────────────────────
-// Locks the period, snapshots all figures, posts VAT liability to GL
-router.post("/period/close", requireAuth, requireRoles("admin", "manager"), c.closePeriod);
+router.get(
+  "/pl",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  validate(accountingValidators.pl),
+  c.getPL
+);
 
+router.get(
+  "/vat/return",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  validate(accountingValidators.vat),
+  c.getVATReturn
+);
+
+router.post(
+  "/journal/generate",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  validate(accountingValidators.generateJournal),
+  c.generateJournal
+);
+
+router.get(
+  "/export/:format",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  c.exportJournal
+);
+
+router.post(
+  "/period/close",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  validate(accountingValidators.closePeriod),
+  c.closePeriod
+);
 
 module.exports = router;
