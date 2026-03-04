@@ -1,130 +1,199 @@
+// File: src/routes/reports.routes.js
 const express = require("express");
 const router = express.Router();
 
 const reportsController = require("../controllers/reports.controller");
 const { requireAuth, requireRoles } = require("../middleware");
 
-// VIEW REPORTS (admin + manager)
-router.get(
-  "/summary",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  reportsController.getSummary
-);
+const auth = [requireAuth, requireRoles("admin", "manager")];
 
-router.get(
-  "/by-department",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  reportsController.getSalaryByDepartment
-);
-
-router.get(
-  "/highest-paid",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  reportsController.getHighestPaid
-);
-
-router.get(
-  "/summary.csv",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  reportsController.exportSummaryCsv
-);
-
-router.get(
-  "/summary.xlsx",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  reportsController.exportSummaryXlsx
-);
-
+// ── Legacy endpoints ──────────────────────────────────
+router.get("/summary", ...auth, reportsController.getSummary);
+router.get("/by-department", ...auth, reportsController.getSalaryByDepartment);
+router.get("/highest-paid", ...auth, reportsController.getHighestPaid);
+router.get("/summary.csv", ...auth, reportsController.exportSummaryCsv);
+router.get("/summary.xlsx", ...auth, reportsController.exportSummaryXlsx);
 router.get(
   "/by-department.csv",
-  requireAuth,
-  requireRoles("admin", "manager"),
+  ...auth,
   reportsController.exportByDepartmentCsv
 );
-
 router.get(
   "/by-department.xlsx",
-  requireAuth,
-  requireRoles("admin", "manager"),
+  ...auth,
   reportsController.exportByDepartmentXlsx
 );
-
 router.get(
   "/highest-paid.csv",
-  requireAuth,
-  requireRoles("admin", "manager"),
+  ...auth,
   reportsController.exportHighestPaidCsv
 );
-
 router.get(
   "/highest-paid.xlsx",
-  requireAuth,
-  requireRoles("admin", "manager"),
+  ...auth,
   reportsController.exportHighestPaidXlsx
 );
 
-// ── NEW: Full HR Report ──
-router.get(
-  "/preview",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  reportsController.getPreview
-);
+// ── Full HR Report ────────────────────────────────────
+router.get("/preview", ...auth, reportsController.getPreview);
+router.get("/export/excel", ...auth, reportsController.exportExcel);
+router.get("/export/pdf", ...auth, reportsController.exportPDF);
 
-router.get(
-  "/export/excel",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  reportsController.exportExcel
-);
-
-router.get(
-  "/export/pdf",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  reportsController.exportPDF
-);
-
-
-// ── NEW: Department Labour Costing (Phase 2) ──
+// ── Analytics / Labour Costing ───────────────────────
 router.get(
   "/department-labour-costing",
-  requireAuth,
-  requireRoles("admin", "manager"),
+  ...auth,
   reportsController.getDepartmentLabourCosting
 );
-
 router.get(
   "/shift-type-analysis",
-  requireAuth,
-  requireRoles("admin", "manager"),
+  ...auth,
   reportsController.getShiftTypeAnalysis
 );
-
 router.get(
   "/labour-cost-trends",
-  requireAuth,
-  requireRoles("admin", "manager"),
+  ...auth,
   reportsController.getLabourCostTrends
 );
-
 router.get(
   "/overtime-analysis",
-  requireAuth,
-  requireRoles("admin", "manager"),
+  ...auth,
   reportsController.getOvertimeAnalysis
 );
-
 router.get(
   "/export/department-labour-costing.csv",
-  requireAuth,
-  requireRoles("admin", "manager"),
+  ...auth,
   reportsController.exportDepartmentLabourCostingCSV
+);
+
+// ── EMPLOYEE REPORTS ──────────────────────────────────
+router.get(
+  "/employees/export/excel",
+  ...auth,
+  reportsController.exportEmployeesExcel
+);
+router.get(
+  "/employees/export/pdf",
+  ...auth,
+  reportsController.exportEmployeesPDF
+);
+router.get(
+  "/employees/headcount/export/excel",
+  ...auth,
+  reportsController.exportHeadcountExcel
+);
+router.get(
+  "/employees/headcount/export/pdf",
+  ...auth,
+  reportsController.exportHeadcountPDF
+);
+
+// ── PAYROLL REPORTS ───────────────────────────────────
+router.get(
+  "/payroll/export/excel",
+  ...auth,
+  reportsController.exportPayrollSummaryExcel
+);
+router.get(
+  "/payroll/export/pdf",
+  ...auth,
+  reportsController.exportPayrollSummaryPDF
+);
+router.get(
+  "/payroll/detailed/export/excel",
+  ...auth,
+  reportsController.exportPayrollDetailedExcel
+);
+router.get(
+  "/payroll/detailed/export/pdf",
+  ...auth,
+  reportsController.exportPayrollDetailedPDF
+);
+router.get(
+  "/payroll/ytd/export/excel",
+  ...auth,
+  reportsController.exportPayrollYTDExcel
+);
+router.get(
+  "/payroll/ytd/export/pdf",
+  ...auth,
+  reportsController.exportPayrollYTDPDF
+);
+
+// ── ATTENDANCE REPORTS ────────────────────────────────
+router.get(
+  "/attendance/export/excel",
+  ...auth,
+  reportsController.exportAttendanceMonthlyExcel
+);
+router.get(
+  "/attendance/export/pdf",
+  ...auth,
+  reportsController.exportAttendanceMonthlyPDF
+);
+router.get(
+  "/attendance/range/export/excel",
+  ...auth,
+  reportsController.exportAttendanceRangeExcel
+);
+router.get(
+  "/attendance/range/export/pdf",
+  ...auth,
+  reportsController.exportAttendanceRangePDF
+);
+router.get(
+  "/attendance/overtime/export/excel",
+  ...auth,
+  reportsController.exportOvertimeExcel
+);
+router.get(
+  "/attendance/overtime/export/pdf",
+  ...auth,
+  reportsController.exportOvertimePDF
+);
+
+// ── LEAVE REPORTS ─────────────────────────────────────
+router.get(
+  "/leave/balances/export/excel",
+  ...auth,
+  reportsController.exportLeaveBalancesExcel
+);
+router.get(
+  "/leave/balances/export/pdf",
+  ...auth,
+  reportsController.exportLeaveBalancesPDF
+);
+router.get(
+  "/leave/taken/export/excel",
+  ...auth,
+  reportsController.exportLeaveTakenExcel
+);
+router.get(
+  "/leave/taken/export/pdf",
+  ...auth,
+  reportsController.exportLeaveTakenPDF
+);
+
+// ── SARS & TAX REPORTS ───────────────────────────────
+router.get(
+  "/sars/emp201/export/excel",
+  ...auth,
+  reportsController.exportEMP201Excel
+);
+router.get(
+  "/sars/emp201/export/pdf",
+  ...auth,
+  reportsController.exportEMP201PDF
+);
+router.get(
+  "/sars/liability/export/excel",
+  ...auth,
+  reportsController.exportTaxLiabilityExcel
+);
+router.get(
+  "/sars/liability/export/pdf",
+  ...auth,
+  reportsController.exportTaxLiabilityPDF
 );
 
 module.exports = router;

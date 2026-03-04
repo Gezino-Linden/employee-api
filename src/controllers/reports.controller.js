@@ -1621,3 +1621,1465 @@ exports.exportDepartmentLabourCostingCSV = async (req, res) => {
     return res.status(500).json({ error: 'Failed to export CSV', details: err.message });
   }
 };
+// =====================================================
+// INDIVIDUAL REPORT ENDPOINTS
+// Append these to the bottom of reports.controller.js
+// (before the last line if any, or just add at the end)
+// =====================================================
+
+const moneyFmt = 'R #,##0.00';
+const shortMonths = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const fullMonths  = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
+
+// ── Shared Excel styling helpers ──────────────────────
+const HEADER_STYLE = {
+  font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 10, name: 'Arial' },
+  fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } },
+  alignment: { horizontal: 'center', vertical: 'middle' },
+};
+const TITLE_STYLE = {
+  font: { bold: true, size: 13, name: 'Arial', color: { argb: 'FF0F172A' } },
+  fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCD34D' } },
+  alignment: { horizontal: 'left', vertical: 'middle' },
+};
+const TOTAL_STYLE = {
+  font: { bold: true, size: 10, name: 'Arial' },
+  fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } },
+  border: { top: { style: 'medium' } },
+};
+const ALT_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+
+function styleHeader(row) {
+  row.eachCell(c => Object.assign(c, HEADER_STYLE));
+  row.height = 20;
+}
+function addTitle(ws, title, cols, periodLabel, companyName) {
+  const r = ws.addRow([title]);
+  ws.mergeCells(r.number, 1, r.number, cols);
+  Object.assign(r.getCell(1), TITLE_STYLE);
+  r.height = 26;
+  ws.addRow([`${companyName}  ·  ${periodLabel}  ·  Generated: ${new Date().toLocaleDateString('en-ZA')}`]);
+  ws.addRow([]);
+}
+function altRow(row, i) {
+  if (i % 2 === 0) row.eachCell(c => { c.fill = ALT_FILL; });
+}
+
+// ── HTML PDF template helper ──────────────────────────
+function pdfWrapper(title, companyName, periodLabel, body) {
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>${title} - ${companyName}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;font-size:11px;color:#1e293b;background:#fff}
+.page{padding:28px;max-width:1100px;margin:0 auto}
+.hdr{background:#1e293b;color:#fff;padding:20px 28px;border-radius:8px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center}
+.hdr h1{font-size:20px;font-weight:900;letter-spacing:.5px}
+.hdr p{font-size:11px;color:#94a3b8;margin-top:3px}
+.badge{background:#f59e0b;color:#1e293b;padding:5px 14px;border-radius:6px;font-weight:800;font-size:12px}
+.sec{margin-bottom:24px}
+.sec-title{background:#f59e0b;color:#1e293b;padding:7px 12px;font-size:12px;font-weight:800;border-radius:6px 6px 0 0}
+table{width:100%;border-collapse:collapse}
+th{background:#1e293b;color:#fff;padding:7px 9px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.4px}
+td{padding:6px 9px;border-bottom:1px solid #f1f5f9;font-size:10px}
+tr:nth-child(even) td{background:#f8fafc}
+.r{text-align:right;font-family:'Courier New',monospace}
+.tot td{background:#e2e8f0!important;font-weight:800;border-top:2px solid #94a3b8}
+.badge-ok{background:#d1fae5;color:#059669;padding:1px 7px;border-radius:8px;font-size:9px;font-weight:700;text-transform:uppercase}
+.badge-warn{background:#fef3c7;color:#d97706;padding:1px 7px;border-radius:8px;font-size:9px;font-weight:700;text-transform:uppercase}
+.badge-bad{background:#fee2e2;color:#dc2626;padding:1px 7px;border-radius:8px;font-size:9px;font-weight:700;text-transform:uppercase}
+.badge-info{background:#dbeafe;color:#2563eb;padding:1px 7px;border-radius:8px;font-size:9px;font-weight:700;text-transform:uppercase}
+.ftr{margin-top:24px;border-top:1px solid #e2e8f0;padding-top:10px;display:flex;justify-content:space-between;font-size:9px;color:#94a3b8}
+@media print{.sec{page-break-inside:avoid}}
+</style></head><body><div class="page">
+<div class="hdr"><div><h1>${title}</h1><p>${companyName} · ${periodLabel} · Generated ${new Date().toLocaleDateString('en-ZA')}</p></div><div class="badge">PeopleOS</div></div>
+${body}
+<div class="ftr"><span>PeopleOS HR System · ${companyName}</span><span>${periodLabel}</span><span>${new Date().toLocaleString('en-ZA')}</span></div>
+</div></body></html>`;
+}
+
+async function getCompanyName(companyId) {
+  const r = await db.query(`SELECT name FROM companies WHERE id = $1`, [companyId]);
+  return r.rows[0]?.name || 'Company';
+}
+
+// =====================================================
+// EMPLOYEE REGISTER
+// =====================================================
+exports.exportEmployeesExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const companyName = await getCompanyName(companyId);
+
+    const { rows } = await db.query(
+      `SELECT id, first_name, last_name, email, department, position, salary,
+              employment_type, is_active, id_number, tax_number, created_at
+       FROM employees WHERE company_id = $1 ORDER BY first_name`,
+      [companyId]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('Employee Register', { tabColor: { argb: 'FF8B5CF6' } });
+    ws.columns = [
+      { key: 'id',       width: 7  },
+      { key: 'name',     width: 28 },
+      { key: 'email',    width: 30 },
+      { key: 'dept',     width: 20 },
+      { key: 'position', width: 22 },
+      { key: 'salary',   width: 18 },
+      { key: 'type',     width: 16 },
+      { key: 'status',   width: 12 },
+      { key: 'id_num',   width: 20 },
+      { key: 'tax_num',  width: 18 },
+    ];
+    addTitle(ws, '👥 EMPLOYEE REGISTER', 10, `Year ${year}`, companyName);
+    styleHeader(ws.addRow(['ID','Full Name','Email','Department','Position','Salary','Type','Status','ID Number','Tax Number']));
+
+    rows.forEach((e, i) => {
+      const row = ws.addRow({
+        id: e.id, name: `${e.first_name} ${e.last_name}`, email: e.email,
+        dept: e.department || '—', position: e.position || '—',
+        salary: toNum(e.salary), type: e.employment_type || '—',
+        status: e.is_active ? 'Active' : 'Inactive',
+        id_num: e.id_number || '—', tax_num: e.tax_number || '—',
+      });
+      row.getCell('salary').numFmt = moneyFmt;
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    const total = ws.addRow(['', `TOTAL: ${rows.length} employees`, '', '', '',
+      `=SUM(F5:F${4 + rows.length})`, '', '', '', '']);
+    total.eachCell(c => Object.assign(c, TOTAL_STYLE));
+    total.getCell(6).numFmt = moneyFmt;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="employee-register-${year}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportEmployeesExcel:', err);
+    res.status(500).json({ error: 'Failed to export employee register', details: err.message });
+  }
+};
+
+exports.exportEmployeesPDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const companyName = await getCompanyName(companyId);
+
+    const { rows } = await db.query(
+      `SELECT id, first_name, last_name, email, department, position, salary,
+              employment_type, is_active, id_number, tax_number
+       FROM employees WHERE company_id = $1 ORDER BY first_name`,
+      [companyId]
+    );
+
+    const active = rows.filter(e => e.is_active).length;
+    const totalSalary = rows.reduce((s, e) => s + toNum(e.salary), 0);
+
+    const body = `
+    <div class="sec">
+      <div class="sec-title">👥 EMPLOYEE REGISTER (${rows.length} employees · ${active} active)</div>
+      <table><thead><tr><th>#</th><th>Full Name</th><th>Department</th><th>Position</th><th>Salary</th><th>Type</th><th>Status</th><th>ID Number</th><th>Tax Number</th></tr></thead>
+      <tbody>
+        ${rows.map((e, i) => `<tr>
+          <td>${i+1}</td>
+          <td>${e.first_name} ${e.last_name}</td>
+          <td>${e.department || '—'}</td>
+          <td>${e.position || '—'}</td>
+          <td class="r">R ${formatMoney(e.salary)}</td>
+          <td>${e.employment_type || '—'}</td>
+          <td><span class="${e.is_active ? 'badge-ok' : 'badge-bad'}">${e.is_active ? 'Active' : 'Inactive'}</span></td>
+          <td>${e.id_number || '—'}</td>
+          <td>${e.tax_number || '—'}</td>
+        </tr>`).join('')}
+        <tr class="tot"><td colspan="4"><strong>TOTAL</strong></td><td class="r"><strong>R ${formatMoney(totalSalary)}</strong></td><td colspan="4"></td></tr>
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('👥 Employee Register', companyName, `Year ${year}`, body));
+  } catch (err) {
+    console.error('exportEmployeesPDF:', err);
+    res.status(500).json({ error: 'Failed to export employee register PDF', details: err.message });
+  }
+};
+
+// =====================================================
+// HEADCOUNT BY DEPARTMENT
+// =====================================================
+exports.exportHeadcountExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const companyName = await getCompanyName(companyId);
+
+    const { rows } = await db.query(
+      `SELECT department,
+              COUNT(*) FILTER (WHERE is_active = true)::int  AS active,
+              COUNT(*) FILTER (WHERE is_active = false)::int AS inactive,
+              COUNT(*)::int AS total,
+              COALESCE(ROUND(AVG(salary) FILTER (WHERE is_active=true), 2), 0) AS avg_salary,
+              COALESCE(ROUND(SUM(salary) FILTER (WHERE is_active=true), 2), 0) AS total_salary
+       FROM employees WHERE company_id = $1
+       GROUP BY department ORDER BY total DESC`,
+      [companyId]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('Headcount', { tabColor: { argb: 'FF8B5CF6' } });
+    ws.columns = [
+      { key: 'dept',    width: 24 },
+      { key: 'active',  width: 12 },
+      { key: 'inactive',width: 12 },
+      { key: 'total',   width: 10 },
+      { key: 'avg_sal', width: 20 },
+      { key: 'tot_sal', width: 22 },
+    ];
+    addTitle(ws, '🏢 HEADCOUNT BY DEPARTMENT', 6, `Year ${year}`, companyName);
+    styleHeader(ws.addRow(['Department','Active','Inactive','Total','Avg Salary','Total Salary']));
+
+    rows.forEach((r, i) => {
+      const row = ws.addRow({
+        dept: r.department || 'Unassigned',
+        active: r.active, inactive: r.inactive, total: r.total,
+        avg_sal: toNum(r.avg_salary), tot_sal: toNum(r.total_salary),
+      });
+      row.getCell('avg_sal').numFmt = moneyFmt;
+      row.getCell('tot_sal').numFmt = moneyFmt;
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    const s = 5, e2 = 4 + rows.length;
+    const tot = ws.addRow([`TOTAL: ${rows.length} departments`,
+      `=SUM(B${s}:B${e2})`, `=SUM(C${s}:C${e2})`, `=SUM(D${s}:D${e2})`,
+      '', `=SUM(F${s}:F${e2})`]);
+    tot.eachCell(c => Object.assign(c, TOTAL_STYLE));
+    tot.getCell(6).numFmt = moneyFmt;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="headcount-by-dept-${year}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportHeadcountExcel:', err);
+    res.status(500).json({ error: 'Failed to export headcount report', details: err.message });
+  }
+};
+
+exports.exportHeadcountPDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const companyName = await getCompanyName(companyId);
+
+    const { rows } = await db.query(
+      `SELECT department,
+              COUNT(*) FILTER (WHERE is_active = true)::int  AS active,
+              COUNT(*) FILTER (WHERE is_active = false)::int AS inactive,
+              COUNT(*)::int AS total,
+              COALESCE(ROUND(AVG(salary) FILTER (WHERE is_active=true),2),0) AS avg_salary,
+              COALESCE(ROUND(SUM(salary) FILTER (WHERE is_active=true),2),0) AS total_salary
+       FROM employees WHERE company_id = $1
+       GROUP BY department ORDER BY total DESC`,
+      [companyId]
+    );
+
+    const totalEmp = rows.reduce((s, r) => s + r.total, 0);
+    const body = `
+    <div class="sec">
+      <div class="sec-title">🏢 HEADCOUNT BY DEPARTMENT</div>
+      <table><thead><tr><th>Department</th><th>Active</th><th>Inactive</th><th>Total</th><th>Avg Salary</th><th>Total Salary</th></tr></thead>
+      <tbody>
+        ${rows.map((r, i) => `<tr>
+          <td>${r.department || 'Unassigned'}</td>
+          <td>${r.active}</td>
+          <td>${r.inactive}</td>
+          <td><strong>${r.total}</strong></td>
+          <td class="r">R ${formatMoney(r.avg_salary)}</td>
+          <td class="r">R ${formatMoney(r.total_salary)}</td>
+        </tr>`).join('')}
+        <tr class="tot">
+          <td><strong>TOTAL</strong></td>
+          <td><strong>${rows.reduce((s,r)=>s+r.active,0)}</strong></td>
+          <td><strong>${rows.reduce((s,r)=>s+r.inactive,0)}</strong></td>
+          <td><strong>${totalEmp}</strong></td>
+          <td></td>
+          <td class="r"><strong>R ${formatMoney(rows.reduce((s,r)=>s+toNum(r.total_salary),0))}</strong></td>
+        </tr>
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('🏢 Headcount by Department', companyName, `Year ${year}`, body));
+  } catch (err) {
+    console.error('exportHeadcountPDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+// =====================================================
+// PAYROLL SUMMARY (monthly)
+// =====================================================
+exports.exportPayrollSummaryExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${fullMonths[month]} ${year}`;
+
+    const { rows } = await db.query(
+      `SELECT pr.*, e.first_name||' '||e.last_name AS employee_name, e.department
+       FROM payroll_records pr JOIN employees e ON e.id = pr.employee_id
+       WHERE pr.company_id=$1 AND pr.year=$2 AND pr.month=$3
+       ORDER BY e.first_name`,
+      [companyId, year, month]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('Payroll Summary', { tabColor: { argb: 'FFF59E0B' } });
+    ws.columns = [
+      { key: 'name',   width: 28 }, { key: 'dept',   width: 18 },
+      { key: 'basic',  width: 18 }, { key: 'allow',  width: 16 },
+      { key: 'bonus',  width: 14 }, { key: 'ot',     width: 14 },
+      { key: 'gross',  width: 18 }, { key: 'paye',   width: 16 },
+      { key: 'uif',    width: 14 }, { key: 'pension',width: 14 },
+      { key: 'net',    width: 18 }, { key: 'status', width: 13 },
+    ];
+    addTitle(ws, '💰 PAYROLL SUMMARY', 12, periodLabel, companyName);
+    styleHeader(ws.addRow(['Employee','Department','Basic Salary','Allowances','Bonuses','Overtime','Gross Pay','PAYE','UIF','Pension','Net Pay','Status']));
+
+    rows.forEach((p, i) => {
+      const row = ws.addRow({
+        name: p.employee_name, dept: p.department || '—',
+        basic: toNum(p.basic_salary), allow: toNum(p.allowances),
+        bonus: toNum(p.bonuses), ot: toNum(p.overtime),
+        gross: toNum(p.gross_pay), paye: toNum(p.tax),
+        uif: toNum(p.uif), pension: toNum(p.pension_employee),
+        net: toNum(p.net_pay), status: p.status,
+      });
+      ['basic','allow','bonus','ot','gross','paye','uif','pension','net'].forEach(k => row.getCell(k).numFmt = moneyFmt);
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    const s = 5, e2 = 4 + rows.length;
+    const tot = ws.addRow([`TOTALS: ${rows.length} employees`, '',
+      `=SUM(C${s}:C${e2})`, `=SUM(D${s}:D${e2})`, `=SUM(E${s}:E${e2})`,
+      `=SUM(F${s}:F${e2})`, `=SUM(G${s}:G${e2})`, `=SUM(H${s}:H${e2})`,
+      `=SUM(I${s}:I${e2})`, `=SUM(J${s}:J${e2})`, `=SUM(K${s}:K${e2})`, '']);
+    tot.eachCell(c => Object.assign(c, TOTAL_STYLE));
+    ['C','D','E','F','G','H','I','J','K'].forEach(col => tot.getCell(col).numFmt = moneyFmt);
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="payroll-summary-${year}-${month}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportPayrollSummaryExcel:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+exports.exportPayrollSummaryPDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${fullMonths[month]} ${year}`;
+
+    const { rows } = await db.query(
+      `SELECT pr.*, e.first_name||' '||e.last_name AS employee_name, e.department
+       FROM payroll_records pr JOIN employees e ON e.id = pr.employee_id
+       WHERE pr.company_id=$1 AND pr.year=$2 AND pr.month=$3
+       ORDER BY e.first_name`,
+      [companyId, year, month]
+    );
+
+    const tGross = rows.reduce((s,r) => s + toNum(r.gross_pay), 0);
+    const tPaye  = rows.reduce((s,r) => s + toNum(r.tax), 0);
+    const tUif   = rows.reduce((s,r) => s + toNum(r.uif), 0);
+    const tNet   = rows.reduce((s,r) => s + toNum(r.net_pay), 0);
+
+    const body = `
+    <div class="sec">
+      <div class="sec-title">💰 PAYROLL SUMMARY — ${periodLabel} (${rows.length} employees)</div>
+      <table><thead><tr><th>Employee</th><th>Department</th><th>Basic</th><th>Allowances</th><th>Overtime</th><th>Gross</th><th>PAYE</th><th>UIF</th><th>Net Pay</th><th>Status</th></tr></thead>
+      <tbody>
+        ${rows.map(p => `<tr>
+          <td>${p.employee_name}</td>
+          <td>${p.department||'—'}</td>
+          <td class="r">R ${formatMoney(p.basic_salary)}</td>
+          <td class="r">R ${formatMoney(p.allowances)}</td>
+          <td class="r">R ${formatMoney(p.overtime)}</td>
+          <td class="r">R ${formatMoney(p.gross_pay)}</td>
+          <td class="r">R ${formatMoney(p.tax)}</td>
+          <td class="r">R ${formatMoney(p.uif)}</td>
+          <td class="r">R ${formatMoney(p.net_pay)}</td>
+          <td><span class="badge-${p.status==='paid'?'ok':p.status==='processed'?'info':'warn'}">${p.status}</span></td>
+        </tr>`).join('')}
+        <tr class="tot"><td colspan="5"><strong>TOTALS</strong></td>
+          <td class="r"><strong>R ${formatMoney(tGross)}</strong></td>
+          <td class="r"><strong>R ${formatMoney(tPaye)}</strong></td>
+          <td class="r"><strong>R ${formatMoney(tUif)}</strong></td>
+          <td class="r"><strong>R ${formatMoney(tNet)}</strong></td>
+          <td></td>
+        </tr>
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('💰 Payroll Summary', companyName, periodLabel, body));
+  } catch (err) {
+    console.error('exportPayrollSummaryPDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+// =====================================================
+// PAYROLL DETAILED BREAKDOWN
+// =====================================================
+exports.exportPayrollDetailedExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${fullMonths[month]} ${year}`;
+
+    const { rows } = await db.query(
+      `SELECT pr.*, e.first_name||' '||e.last_name AS employee_name, e.department,
+              e.id_number, e.tax_number, e.employment_type
+       FROM payroll_records pr JOIN employees e ON e.id = pr.employee_id
+       WHERE pr.company_id=$1 AND pr.year=$2 AND pr.month=$3
+       ORDER BY e.first_name`,
+      [companyId, year, month]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('Payroll Detail', { tabColor: { argb: 'FFF59E0B' } });
+    ws.columns = [
+      { key: 'name',    width: 26 }, { key: 'dept',    width: 16 },
+      { key: 'id_num',  width: 18 }, { key: 'tax_num', width: 16 },
+      { key: 'basic',   width: 16 }, { key: 'allow',   width: 14 },
+      { key: 'bonus',   width: 12 }, { key: 'night',   width: 14 },
+      { key: 'ot',      width: 14 }, { key: 'gross',   width: 16 },
+      { key: 'paye',    width: 14 }, { key: 'uif',     width: 12 },
+      { key: 'pension', width: 14 }, { key: 'other_d', width: 14 },
+      { key: 'net',     width: 16 }, { key: 'status',  width: 12 },
+      { key: 'payment', width: 14 },
+    ];
+    addTitle(ws, '🧾 PAYROLL DETAILED BREAKDOWN', 17, periodLabel, companyName);
+    styleHeader(ws.addRow(['Employee','Dept','ID Number','Tax Number','Basic','Allowances','Bonuses','Night Pay','Overtime','Gross','PAYE','UIF','Pension','Other Ded.','Net Pay','Status','Payment Method']));
+
+    rows.forEach((p, i) => {
+      const row = ws.addRow({
+        name: p.employee_name, dept: p.department || '—',
+        id_num: p.id_number || '—', tax_num: p.tax_number || '—',
+        basic: toNum(p.basic_salary), allow: toNum(p.allowances),
+        bonus: toNum(p.bonuses), night: toNum(p.night_pay),
+        ot: toNum(p.overtime), gross: toNum(p.gross_pay),
+        paye: toNum(p.tax), uif: toNum(p.uif),
+        pension: toNum(p.pension_employee),
+        other_d: toNum(p.other_deductions),
+        net: toNum(p.net_pay), status: p.status,
+        payment: p.payment_method || '—',
+      });
+      ['basic','allow','bonus','night','ot','gross','paye','uif','pension','other_d','net'].forEach(k => row.getCell(k).numFmt = moneyFmt);
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="payroll-detailed-${year}-${month}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportPayrollDetailedExcel:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+exports.exportPayrollDetailedPDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${fullMonths[month]} ${year}`;
+
+    const { rows } = await db.query(
+      `SELECT pr.*, e.first_name||' '||e.last_name AS employee_name, e.department,
+              e.id_number, e.tax_number
+       FROM payroll_records pr JOIN employees e ON e.id = pr.employee_id
+       WHERE pr.company_id=$1 AND pr.year=$2 AND pr.month=$3
+       ORDER BY e.first_name`,
+      [companyId, year, month]
+    );
+
+    const body = `
+    <div class="sec">
+      <div class="sec-title">🧾 PAYROLL DETAILED BREAKDOWN — ${periodLabel}</div>
+      <table><thead><tr><th>Employee</th><th>ID No.</th><th>Tax No.</th><th>Basic</th><th>Allow.</th><th>Night</th><th>OT</th><th>Gross</th><th>PAYE</th><th>UIF</th><th>Pension</th><th>Net Pay</th><th>Status</th></tr></thead>
+      <tbody>
+        ${rows.map(p => `<tr>
+          <td>${p.employee_name}<br><small style="color:#64748b">${p.department||'—'}</small></td>
+          <td>${p.id_number||'—'}</td>
+          <td>${p.tax_number||'—'}</td>
+          <td class="r">R ${formatMoney(p.basic_salary)}</td>
+          <td class="r">R ${formatMoney(p.allowances)}</td>
+          <td class="r">R ${formatMoney(p.night_pay)}</td>
+          <td class="r">R ${formatMoney(p.overtime)}</td>
+          <td class="r"><strong>R ${formatMoney(p.gross_pay)}</strong></td>
+          <td class="r">R ${formatMoney(p.tax)}</td>
+          <td class="r">R ${formatMoney(p.uif)}</td>
+          <td class="r">R ${formatMoney(p.pension_employee)}</td>
+          <td class="r"><strong>R ${formatMoney(p.net_pay)}</strong></td>
+          <td><span class="badge-${p.status==='paid'?'ok':p.status==='processed'?'info':'warn'}">${p.status}</span></td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('🧾 Payroll Detailed Breakdown', companyName, periodLabel, body));
+  } catch (err) {
+    console.error('exportPayrollDetailedPDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+// =====================================================
+// PAYROLL YEAR-TO-DATE
+// =====================================================
+exports.exportPayrollYTDExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `Jan–${shortMonths[month]} ${year} (YTD)`;
+
+    const { rows } = await db.query(
+      `SELECT e.first_name||' '||e.last_name AS employee_name, e.department,
+              COALESCE(SUM(pr.gross_pay),0)       AS ytd_gross,
+              COALESCE(SUM(pr.tax),0)             AS ytd_paye,
+              COALESCE(SUM(pr.uif),0)             AS ytd_uif,
+              COALESCE(SUM(pr.pension_employee),0) AS ytd_pension,
+              COALESCE(SUM(pr.net_pay),0)         AS ytd_net,
+              COUNT(pr.id)::int                   AS months_paid
+       FROM employees e
+       LEFT JOIN payroll_records pr ON pr.employee_id = e.id
+         AND pr.company_id=$1 AND pr.year=$2 AND pr.month <= $3
+         AND pr.status IN ('processed','paid')
+       WHERE e.company_id=$1
+       GROUP BY e.id, e.first_name, e.last_name, e.department
+       ORDER BY e.first_name`,
+      [companyId, year, month]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('YTD Payroll', { tabColor: { argb: 'FFF59E0B' } });
+    ws.columns = [
+      { key: 'name',    width: 28 }, { key: 'dept',    width: 18 },
+      { key: 'gross',   width: 18 }, { key: 'paye',    width: 16 },
+      { key: 'uif',     width: 14 }, { key: 'pension', width: 16 },
+      { key: 'net',     width: 18 }, { key: 'months',  width: 14 },
+    ];
+    addTitle(ws, '📊 PAYROLL YEAR-TO-DATE', 8, periodLabel, companyName);
+    styleHeader(ws.addRow(['Employee','Department','YTD Gross','YTD PAYE','YTD UIF','YTD Pension','YTD Net Pay','Months Paid']));
+
+    rows.forEach((r, i) => {
+      const row = ws.addRow({
+        name: r.employee_name, dept: r.department || '—',
+        gross: toNum(r.ytd_gross), paye: toNum(r.ytd_paye),
+        uif: toNum(r.ytd_uif), pension: toNum(r.ytd_pension),
+        net: toNum(r.ytd_net), months: r.months_paid,
+      });
+      ['gross','paye','uif','pension','net'].forEach(k => row.getCell(k).numFmt = moneyFmt);
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    const s = 5, e2 = 4 + rows.length;
+    const tot = ws.addRow([`TOTALS: ${rows.length} employees`, '',
+      `=SUM(C${s}:C${e2})`, `=SUM(D${s}:D${e2})`, `=SUM(E${s}:E${e2})`,
+      `=SUM(F${s}:F${e2})`, `=SUM(G${s}:G${e2})`, '']);
+    tot.eachCell(c => Object.assign(c, TOTAL_STYLE));
+    ['C','D','E','F','G'].forEach(col => tot.getCell(col).numFmt = moneyFmt);
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="payroll-ytd-${year}-${month}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportPayrollYTDExcel:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+exports.exportPayrollYTDPDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `Jan–${shortMonths[month]} ${year} (YTD)`;
+
+    const { rows } = await db.query(
+      `SELECT e.first_name||' '||e.last_name AS employee_name, e.department,
+              COALESCE(SUM(pr.gross_pay),0) AS ytd_gross,
+              COALESCE(SUM(pr.tax),0) AS ytd_paye,
+              COALESCE(SUM(pr.uif),0) AS ytd_uif,
+              COALESCE(SUM(pr.net_pay),0) AS ytd_net,
+              COUNT(pr.id)::int AS months_paid
+       FROM employees e
+       LEFT JOIN payroll_records pr ON pr.employee_id = e.id
+         AND pr.company_id=$1 AND pr.year=$2 AND pr.month<=$3
+         AND pr.status IN ('processed','paid')
+       WHERE e.company_id=$1
+       GROUP BY e.id, e.first_name, e.last_name, e.department
+       ORDER BY e.first_name`,
+      [companyId, year, month]
+    );
+
+    const body = `
+    <div class="sec">
+      <div class="sec-title">📊 PAYROLL YEAR-TO-DATE — ${periodLabel}</div>
+      <table><thead><tr><th>Employee</th><th>Department</th><th>YTD Gross</th><th>YTD PAYE</th><th>YTD UIF</th><th>YTD Net Pay</th><th>Months Paid</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr>
+          <td>${r.employee_name}</td><td>${r.department||'—'}</td>
+          <td class="r">R ${formatMoney(r.ytd_gross)}</td>
+          <td class="r">R ${formatMoney(r.ytd_paye)}</td>
+          <td class="r">R ${formatMoney(r.ytd_uif)}</td>
+          <td class="r"><strong>R ${formatMoney(r.ytd_net)}</strong></td>
+          <td>${r.months_paid}</td>
+        </tr>`).join('')}
+        <tr class="tot"><td colspan="2"><strong>TOTALS</strong></td>
+          <td class="r"><strong>R ${formatMoney(rows.reduce((s,r)=>s+toNum(r.ytd_gross),0))}</strong></td>
+          <td class="r"><strong>R ${formatMoney(rows.reduce((s,r)=>s+toNum(r.ytd_paye),0))}</strong></td>
+          <td class="r"><strong>R ${formatMoney(rows.reduce((s,r)=>s+toNum(r.ytd_uif),0))}</strong></td>
+          <td class="r"><strong>R ${formatMoney(rows.reduce((s,r)=>s+toNum(r.ytd_net),0))}</strong></td>
+          <td></td>
+        </tr>
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('📊 Payroll Year-to-Date', companyName, periodLabel, body));
+  } catch (err) {
+    console.error('exportPayrollYTDPDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+// =====================================================
+// ATTENDANCE MONTHLY
+// =====================================================
+exports.exportAttendanceMonthlyExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${fullMonths[month]} ${year}`;
+
+    const { rows } = await db.query(
+      `SELECT e.first_name||' '||e.last_name AS employee_name, e.department,
+              COUNT(ar.id)::int                          AS days_recorded,
+              COALESCE(SUM(ar.total_hours),0)            AS total_hours,
+              COALESCE(SUM(ar.overtime_hours),0)         AS overtime_hours,
+              COUNT(ar.id) FILTER (WHERE ar.status='late')::int AS late_count,
+              COUNT(ar.id) FILTER (WHERE ar.status='absent')::int AS absent_count
+       FROM employees e
+       LEFT JOIN attendance_records ar ON ar.employee_id = e.id
+         AND ar.company_id=$1
+         AND EXTRACT(MONTH FROM ar.date)=$2
+         AND EXTRACT(YEAR FROM ar.date)=$3
+       WHERE e.company_id=$1 AND e.is_active=true
+       GROUP BY e.id, e.first_name, e.last_name, e.department
+       ORDER BY e.first_name`,
+      [companyId, month, year]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('Attendance', { tabColor: { argb: 'FF3B82F6' } });
+    ws.columns = [
+      { key: 'name',    width: 28 }, { key: 'dept',  width: 18 },
+      { key: 'days',    width: 14 }, { key: 'hours', width: 14 },
+      { key: 'ot',      width: 14 }, { key: 'late',  width: 12 },
+      { key: 'absent',  width: 12 },
+    ];
+    addTitle(ws, '🕐 MONTHLY ATTENDANCE REPORT', 7, periodLabel, companyName);
+    styleHeader(ws.addRow(['Employee','Department','Days Recorded','Total Hours','Overtime Hours','Late Days','Absent Days']));
+
+    rows.forEach((r, i) => {
+      const row = ws.addRow({
+        name: r.employee_name, dept: r.department || '—',
+        days: r.days_recorded, hours: round2(r.total_hours),
+        ot: round2(r.overtime_hours), late: r.late_count, absent: r.absent_count,
+      });
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="attendance-${year}-${month}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportAttendanceMonthlyExcel:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+exports.exportAttendanceMonthlyPDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${fullMonths[month]} ${year}`;
+
+    const { rows } = await db.query(
+      `SELECT e.first_name||' '||e.last_name AS employee_name, e.department,
+              COUNT(ar.id)::int AS days_recorded,
+              COALESCE(SUM(ar.total_hours),0) AS total_hours,
+              COALESCE(SUM(ar.overtime_hours),0) AS overtime_hours,
+              COUNT(ar.id) FILTER (WHERE ar.status='late')::int AS late_count,
+              COUNT(ar.id) FILTER (WHERE ar.status='absent')::int AS absent_count
+       FROM employees e
+       LEFT JOIN attendance_records ar ON ar.employee_id = e.id
+         AND ar.company_id=$1 AND EXTRACT(MONTH FROM ar.date)=$2 AND EXTRACT(YEAR FROM ar.date)=$3
+       WHERE e.company_id=$1 AND e.is_active=true
+       GROUP BY e.id, e.first_name, e.last_name, e.department ORDER BY e.first_name`,
+      [companyId, month, year]
+    );
+
+    const body = `
+    <div class="sec">
+      <div class="sec-title">🕐 MONTHLY ATTENDANCE — ${periodLabel}</div>
+      <table><thead><tr><th>Employee</th><th>Department</th><th>Days</th><th>Total Hours</th><th>Overtime</th><th>Late Days</th><th>Absent Days</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr>
+          <td>${r.employee_name}</td><td>${r.department||'—'}</td>
+          <td>${r.days_recorded}</td><td>${round2(r.total_hours)}</td>
+          <td>${round2(r.overtime_hours)}</td>
+          <td><span class="${r.late_count>0?'badge-warn':'badge-ok'}">${r.late_count}</span></td>
+          <td><span class="${r.absent_count>0?'badge-bad':'badge-ok'}">${r.absent_count}</span></td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('🕐 Monthly Attendance Report', companyName, periodLabel, body));
+  } catch (err) {
+    console.error('exportAttendanceMonthlyPDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+// =====================================================
+// ATTENDANCE BY DATE RANGE
+// =====================================================
+exports.exportAttendanceRangeExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const startDate = req.query.start_date || `${year}-01-01`;
+    const endDate   = req.query.end_date   || new Date().toISOString().split('T')[0];
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${startDate} to ${endDate}`;
+
+    const { rows } = await db.query(
+      `SELECT ar.*, e.first_name||' '||e.last_name AS employee_name, e.department
+       FROM attendance_records ar JOIN employees e ON e.id = ar.employee_id
+       WHERE ar.company_id=$1 AND ar.date BETWEEN $2 AND $3
+       ORDER BY ar.date, e.first_name`,
+      [companyId, startDate, endDate]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('Attendance Range', { tabColor: { argb: 'FF3B82F6' } });
+    ws.columns = [
+      { key: 'date',     width: 14 }, { key: 'name',    width: 26 },
+      { key: 'dept',     width: 18 }, { key: 'in',      width: 12 },
+      { key: 'out',      width: 12 }, { key: 'hours',   width: 13 },
+      { key: 'ot',       width: 13 }, { key: 'status',  width: 13 },
+    ];
+    addTitle(ws, '📅 ATTENDANCE BY DATE RANGE', 8, periodLabel, companyName);
+    styleHeader(ws.addRow(['Date','Employee','Department','Clock In','Clock Out','Hours','Overtime','Status']));
+
+    rows.forEach((a, i) => {
+      const row = ws.addRow({
+        date: new Date(a.date).toLocaleDateString('en-ZA'),
+        name: a.employee_name, dept: a.department || '—',
+        in: a.clock_in  ? new Date(a.clock_in).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}) : '—',
+        out: a.clock_out ? new Date(a.clock_out).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}) : '—',
+        hours: round2(a.total_hours), ot: round2(a.overtime_hours),
+        status: a.status || '—',
+      });
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="attendance-range-${startDate}-${endDate}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportAttendanceRangeExcel:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+exports.exportAttendanceRangePDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const startDate = req.query.start_date || `${year}-01-01`;
+    const endDate   = req.query.end_date   || new Date().toISOString().split('T')[0];
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${startDate} to ${endDate}`;
+
+    const { rows } = await db.query(
+      `SELECT ar.*, e.first_name||' '||e.last_name AS employee_name, e.department
+       FROM attendance_records ar JOIN employees e ON e.id = ar.employee_id
+       WHERE ar.company_id=$1 AND ar.date BETWEEN $2 AND $3
+       ORDER BY ar.date, e.first_name`,
+      [companyId, startDate, endDate]
+    );
+
+    const body = `
+    <div class="sec">
+      <div class="sec-title">📅 ATTENDANCE — ${periodLabel} (${rows.length} records)</div>
+      <table><thead><tr><th>Date</th><th>Employee</th><th>Department</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Overtime</th><th>Status</th></tr></thead>
+      <tbody>
+        ${rows.map(a => `<tr>
+          <td>${new Date(a.date).toLocaleDateString('en-ZA')}</td>
+          <td>${a.employee_name}</td><td>${a.department||'—'}</td>
+          <td>${a.clock_in  ? new Date(a.clock_in).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+          <td>${a.clock_out ? new Date(a.clock_out).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+          <td>${round2(a.total_hours)}</td>
+          <td>${round2(a.overtime_hours)}</td>
+          <td><span class="badge-${a.status==='present'?'ok':a.status==='late'?'warn':'bad'}">${a.status||'—'}</span></td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('📅 Attendance by Date Range', companyName, periodLabel, body));
+  } catch (err) {
+    console.error('exportAttendanceRangePDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+// =====================================================
+// OVERTIME REPORT
+// =====================================================
+exports.exportOvertimeExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${fullMonths[month]} ${year}`;
+
+    const { rows } = await db.query(
+      `SELECT e.first_name||' '||e.last_name AS employee_name, e.department,
+              COALESCE(SUM(ar.overtime_hours),0) AS ot_hours,
+              COALESCE(SUM(pr.overtime),0)        AS ot_pay,
+              COALESCE(SUM(pr.gross_pay),0)       AS gross_pay,
+              CASE WHEN SUM(pr.gross_pay)>0 THEN ROUND((SUM(pr.overtime)/SUM(pr.gross_pay))*100,2) ELSE 0 END AS ot_pct
+       FROM employees e
+       LEFT JOIN attendance_records ar ON ar.employee_id=e.id
+         AND ar.company_id=$1 AND EXTRACT(MONTH FROM ar.date)=$2 AND EXTRACT(YEAR FROM ar.date)=$3
+       LEFT JOIN payroll_records pr ON pr.employee_id=e.id
+         AND pr.company_id=$1 AND pr.month=$2 AND pr.year=$3
+       WHERE e.company_id=$1 AND e.is_active=true
+       GROUP BY e.id, e.first_name, e.last_name, e.department
+       HAVING COALESCE(SUM(ar.overtime_hours),0) > 0 OR COALESCE(SUM(pr.overtime),0) > 0
+       ORDER BY ot_pay DESC`,
+      [companyId, month, year]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('Overtime', { tabColor: { argb: 'FFEF4444' } });
+    ws.columns = [
+      { key: 'name',    width: 28 }, { key: 'dept',   width: 18 },
+      { key: 'ot_hrs',  width: 16 }, { key: 'ot_pay', width: 18 },
+      { key: 'gross',   width: 18 }, { key: 'ot_pct', width: 16 },
+    ];
+    addTitle(ws, '⏰ OVERTIME REPORT', 6, periodLabel, companyName);
+    styleHeader(ws.addRow(['Employee','Department','Overtime Hours','Overtime Pay','Gross Pay','OT % of Gross']));
+
+    rows.forEach((r, i) => {
+      const row = ws.addRow({
+        name: r.employee_name, dept: r.department||'—',
+        ot_hrs: round2(r.ot_hours), ot_pay: toNum(r.ot_pay),
+        gross: toNum(r.gross_pay), ot_pct: `${round2(r.ot_pct)}%`,
+      });
+      row.getCell('ot_pay').numFmt = moneyFmt;
+      row.getCell('gross').numFmt  = moneyFmt;
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="overtime-${year}-${month}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportOvertimeExcel:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+exports.exportOvertimePDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${fullMonths[month]} ${year}`;
+
+    const { rows } = await db.query(
+      `SELECT e.first_name||' '||e.last_name AS employee_name, e.department,
+              COALESCE(SUM(ar.overtime_hours),0) AS ot_hours,
+              COALESCE(SUM(pr.overtime),0) AS ot_pay,
+              COALESCE(SUM(pr.gross_pay),0) AS gross_pay
+       FROM employees e
+       LEFT JOIN attendance_records ar ON ar.employee_id=e.id
+         AND ar.company_id=$1 AND EXTRACT(MONTH FROM ar.date)=$2 AND EXTRACT(YEAR FROM ar.date)=$3
+       LEFT JOIN payroll_records pr ON pr.employee_id=e.id
+         AND pr.company_id=$1 AND pr.month=$2 AND pr.year=$3
+       WHERE e.company_id=$1 AND e.is_active=true
+       GROUP BY e.id, e.first_name, e.last_name, e.department
+       HAVING COALESCE(SUM(ar.overtime_hours),0)>0 OR COALESCE(SUM(pr.overtime),0)>0
+       ORDER BY ot_pay DESC`,
+      [companyId, month, year]
+    );
+
+    const body = `
+    <div class="sec">
+      <div class="sec-title">⏰ OVERTIME REPORT — ${periodLabel}</div>
+      <table><thead><tr><th>Employee</th><th>Department</th><th>OT Hours</th><th>OT Pay</th><th>Gross Pay</th><th>OT %</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr>
+          <td>${r.employee_name}</td><td>${r.department||'—'}</td>
+          <td>${round2(r.ot_hours)}</td>
+          <td class="r">R ${formatMoney(r.ot_pay)}</td>
+          <td class="r">R ${formatMoney(r.gross_pay)}</td>
+          <td>${round2(toNum(r.gross_pay)>0?(toNum(r.ot_pay)/toNum(r.gross_pay))*100:0)}%</td>
+        </tr>`).join('')}
+        <tr class="tot"><td colspan="3"><strong>TOTALS</strong></td>
+          <td class="r"><strong>R ${formatMoney(rows.reduce((s,r)=>s+toNum(r.ot_pay),0))}</strong></td>
+          <td class="r"><strong>R ${formatMoney(rows.reduce((s,r)=>s+toNum(r.gross_pay),0))}</strong></td>
+          <td></td>
+        </tr>
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('⏰ Overtime Report', companyName, periodLabel, body));
+  } catch (err) {
+    console.error('exportOvertimePDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+// =====================================================
+// LEAVE BALANCES
+// =====================================================
+exports.exportLeaveBalancesExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const companyName = await getCompanyName(companyId);
+
+    const { rows } = await db.query(
+      `SELECT e.first_name||' '||e.last_name AS employee_name, e.department,
+              lt.name AS leave_type, lb.balance, lb.used_days,
+              lb.balance + lb.used_days AS total_entitlement
+       FROM leave_balances lb
+       JOIN employees e ON e.id = lb.employee_id
+       JOIN leave_types lt ON lt.id = lb.leave_type_id
+       WHERE lb.company_id=$1
+       ORDER BY e.first_name, lt.name`,
+      [companyId]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('Leave Balances', { tabColor: { argb: 'FF10B981' } });
+    ws.columns = [
+      { key: 'name',    width: 28 }, { key: 'dept',    width: 18 },
+      { key: 'type',    width: 20 }, { key: 'total',   width: 16 },
+      { key: 'used',    width: 14 }, { key: 'balance', width: 14 },
+    ];
+    addTitle(ws, '🏖️ LEAVE BALANCES', 6, `As at ${new Date().toLocaleDateString('en-ZA')}`, companyName);
+    styleHeader(ws.addRow(['Employee','Department','Leave Type','Total Entitlement','Days Used','Balance Remaining']));
+
+    rows.forEach((r, i) => {
+      const row = ws.addRow({
+        name: r.employee_name, dept: r.department||'—',
+        type: r.leave_type, total: toNum(r.total_entitlement),
+        used: toNum(r.used_days), balance: toNum(r.balance),
+      });
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="leave-balances-${year}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportLeaveBalancesExcel:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+exports.exportLeaveBalancesPDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const companyName = await getCompanyName(companyId);
+
+    const { rows } = await db.query(
+      `SELECT e.first_name||' '||e.last_name AS employee_name, e.department,
+              lt.name AS leave_type, lb.balance, lb.used_days,
+              lb.balance + lb.used_days AS total_entitlement
+       FROM leave_balances lb
+       JOIN employees e ON e.id = lb.employee_id
+       JOIN leave_types lt ON lt.id = lb.leave_type_id
+       WHERE lb.company_id=$1
+       ORDER BY e.first_name, lt.name`,
+      [companyId]
+    );
+
+    const body = `
+    <div class="sec">
+      <div class="sec-title">🏖️ LEAVE BALANCES — As at ${new Date().toLocaleDateString('en-ZA')}</div>
+      <table><thead><tr><th>Employee</th><th>Department</th><th>Leave Type</th><th>Entitlement</th><th>Used</th><th>Remaining</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr>
+          <td>${r.employee_name}</td><td>${r.department||'—'}</td>
+          <td>${r.leave_type}</td>
+          <td>${toNum(r.total_entitlement)}</td>
+          <td>${toNum(r.used_days)}</td>
+          <td><strong>${toNum(r.balance)}</strong></td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('🏖️ Leave Balances', companyName, `Year ${year}`, body));
+  } catch (err) {
+    console.error('exportLeaveBalancesPDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+// =====================================================
+// LEAVE TAKEN
+// =====================================================
+exports.exportLeaveTakenExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const companyName = await getCompanyName(companyId);
+
+    const { rows } = await db.query(
+      `SELECT lr.*, e.first_name||' '||e.last_name AS employee_name, e.department
+       FROM leave_requests lr JOIN employees e ON e.id = lr.employee_id
+       WHERE lr.company_id=$1 AND EXTRACT(YEAR FROM lr.start_date)=$2 AND lr.status='approved'
+       ORDER BY lr.start_date, e.first_name`,
+      [companyId, year]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('Leave Taken', { tabColor: { argb: 'FF10B981' } });
+    ws.columns = [
+      { key: 'name',  width: 28 }, { key: 'dept',   width: 18 },
+      { key: 'type',  width: 20 }, { key: 'start',  width: 14 },
+      { key: 'end',   width: 14 }, { key: 'days',   width: 10 },
+      { key: 'reason',width: 35 },
+    ];
+    addTitle(ws, '✈️ LEAVE TAKEN REPORT', 7, `Year ${year}`, companyName);
+    styleHeader(ws.addRow(['Employee','Department','Leave Type','Start Date','End Date','Days','Reason']));
+
+    rows.forEach((l, i) => {
+      const row = ws.addRow({
+        name: l.employee_name, dept: l.department||'—',
+        type: l.leave_type,
+        start: new Date(l.start_date).toLocaleDateString('en-ZA'),
+        end: new Date(l.end_date).toLocaleDateString('en-ZA'),
+        days: l.days_requested || l.total_days || 0,
+        reason: l.reason || '—',
+      });
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    const s = 5, e2 = 4 + rows.length;
+    const tot = ws.addRow([`TOTAL: ${rows.length} leave requests`, '', '', '', '',
+      `=SUM(F${s}:F${e2})`, '']);
+    tot.eachCell(c => Object.assign(c, TOTAL_STYLE));
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="leave-taken-${year}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportLeaveTakenExcel:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+exports.exportLeaveTakenPDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const companyName = await getCompanyName(companyId);
+
+    const { rows } = await db.query(
+      `SELECT lr.*, e.first_name||' '||e.last_name AS employee_name, e.department
+       FROM leave_requests lr JOIN employees e ON e.id = lr.employee_id
+       WHERE lr.company_id=$1 AND EXTRACT(YEAR FROM lr.start_date)=$2 AND lr.status='approved'
+       ORDER BY lr.start_date, e.first_name`,
+      [companyId, year]
+    );
+
+    const totalDays = rows.reduce((s,r) => s + (r.days_requested || r.total_days || 0), 0);
+    const body = `
+    <div class="sec">
+      <div class="sec-title">✈️ LEAVE TAKEN — Year ${year} (${rows.length} approved requests · ${totalDays} days)</div>
+      <table><thead><tr><th>Employee</th><th>Department</th><th>Leave Type</th><th>Start</th><th>End</th><th>Days</th></tr></thead>
+      <tbody>
+        ${rows.map(l => `<tr>
+          <td>${l.employee_name}</td><td>${l.department||'—'}</td>
+          <td>${l.leave_type}</td>
+          <td>${new Date(l.start_date).toLocaleDateString('en-ZA')}</td>
+          <td>${new Date(l.end_date).toLocaleDateString('en-ZA')}</td>
+          <td><strong>${l.days_requested||l.total_days||0}</strong></td>
+        </tr>`).join('')}
+        <tr class="tot"><td colspan="5"><strong>TOTAL DAYS</strong></td><td><strong>${totalDays}</strong></td></tr>
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('✈️ Leave Taken Report', companyName, `Year ${year}`, body));
+  } catch (err) {
+    console.error('exportLeaveTakenPDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+// =====================================================
+// SARS EMP201 REPORT
+// =====================================================
+exports.exportEMP201Excel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${fullMonths[month]} ${year}`;
+
+    const { rows } = await db.query(
+      `SELECT * FROM emp201_declarations
+       WHERE company_id=$1 AND tax_year=$2 AND tax_period=$3
+       ORDER BY tax_period`,
+      [companyId, year.toString(), month.toString().padStart(2,'0')]
+    );
+
+    // Also pull per-employee detail
+    const { rows: detail } = await db.query(
+      `SELECT e.first_name||' '||e.last_name AS employee_name, e.department,
+              pr.gross_pay, pr.tax AS paye, pr.uif,
+              COALESCE(pr.gross_pay * 0.01, 0) AS sdl
+       FROM payroll_records pr JOIN employees e ON e.id = pr.employee_id
+       WHERE pr.company_id=$1 AND pr.month=$2 AND pr.year=$3
+       ORDER BY e.first_name`,
+      [companyId, month, year]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+
+    // Sheet 1: Declaration summary
+    const ws1 = wb.addWorksheet('EMP201 Declaration', { tabColor: { argb: 'FFEF4444' } });
+    ws1.columns = [
+      { key: 'field', width: 30 }, { key: 'value', width: 22 },
+    ];
+    addTitle(ws1, '🏛️ EMP201 PAYE REPORT', 2, periodLabel, companyName);
+    styleHeader(ws1.addRow(['Field','Value']));
+
+    if (rows.length > 0) {
+      const d = rows[0];
+      const fields = [
+        ['Tax Year', d.tax_year],
+        ['Tax Period', d.tax_period],
+        ['Employee Count', d.employee_count],
+        ['PAYE Amount', toNum(d.paye_amount)],
+        ['SDL Amount', toNum(d.sdl_amount)],
+        ['UIF Employee', toNum(d.uif_employee_amount)],
+        ['UIF Employer', toNum(d.uif_employer_amount)],
+        ['UIF Total', toNum(d.uif_total_amount)],
+        ['Total Liability', toNum(d.total_liability)],
+        ['Submission Status', d.submission_status],
+        ['Payment Status', d.payment_status],
+      ];
+      fields.forEach(([f, v], i) => {
+        const row = ws1.addRow({ field: f, value: v });
+        if (typeof v === 'number') row.getCell('value').numFmt = moneyFmt;
+        altRow(row, i);
+        row.height = 17;
+      });
+    } else {
+      ws1.addRow(['No EMP201 declaration found for this period']);
+    }
+
+    // Sheet 2: Per-employee detail
+    const ws2 = wb.addWorksheet('Employee Detail', { tabColor: { argb: 'FFEF4444' } });
+    ws2.columns = [
+      { key: 'name',  width: 28 }, { key: 'dept',  width: 18 },
+      { key: 'gross', width: 18 }, { key: 'paye',  width: 16 },
+      { key: 'uif',   width: 14 }, { key: 'sdl',   width: 14 },
+    ];
+    addTitle(ws2, '🏛️ EMP201 — EMPLOYEE DETAIL', 6, periodLabel, companyName);
+    styleHeader(ws2.addRow(['Employee','Department','Gross Pay','PAYE','UIF','SDL']));
+    detail.forEach((r, i) => {
+      const row = ws2.addRow({
+        name: r.employee_name, dept: r.department||'—',
+        gross: toNum(r.gross_pay), paye: toNum(r.paye),
+        uif: toNum(r.uif), sdl: round2(r.sdl),
+      });
+      ['gross','paye','uif','sdl'].forEach(k => row.getCell(k).numFmt = moneyFmt);
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="emp201-${year}-${month}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportEMP201Excel:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+exports.exportEMP201PDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+    const companyName = await getCompanyName(companyId);
+    const periodLabel = `${fullMonths[month]} ${year}`;
+
+    const [{ rows: decl }, { rows: detail }] = await Promise.all([
+      db.query(
+        `SELECT * FROM emp201_declarations WHERE company_id=$1 AND tax_year=$2 AND tax_period=$3`,
+        [companyId, year.toString(), month.toString().padStart(2,'0')]
+      ),
+      db.query(
+        `SELECT e.first_name||' '||e.last_name AS employee_name, e.department,
+                pr.gross_pay, pr.tax AS paye, pr.uif,
+                COALESCE(pr.gross_pay * 0.01, 0) AS sdl
+         FROM payroll_records pr JOIN employees e ON e.id = pr.employee_id
+         WHERE pr.company_id=$1 AND pr.month=$2 AND pr.year=$3
+         ORDER BY e.first_name`,
+        [companyId, month, year]
+      ),
+    ]);
+
+    const d = decl[0] || {};
+    const body = `
+    <div class="sec">
+      <div class="sec-title">🏛️ EMP201 PAYE DECLARATION — ${periodLabel}</div>
+      <table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+        <tr><td>Tax Year</td><td>${d.tax_year || year}</td></tr>
+        <tr><td>Tax Period</td><td>${d.tax_period || month}</td></tr>
+        <tr><td>Employee Count</td><td>${d.employee_count || detail.length}</td></tr>
+        <tr><td>PAYE Amount</td><td class="r">R ${formatMoney(d.paye_amount || detail.reduce((s,r)=>s+toNum(r.paye),0))}</td></tr>
+        <tr><td>SDL Amount (1%)</td><td class="r">R ${formatMoney(d.sdl_amount || detail.reduce((s,r)=>s+toNum(r.sdl),0))}</td></tr>
+        <tr><td>UIF Total</td><td class="r">R ${formatMoney(d.uif_total_amount || detail.reduce((s,r)=>s+toNum(r.uif)*2,0))}</td></tr>
+        <tr><td><strong>Total Liability</strong></td><td class="r"><strong>R ${formatMoney(d.total_liability || 0)}</strong></td></tr>
+        <tr><td>Submission Status</td><td><span class="badge-${d.submission_status==='submitted'?'ok':'warn'}">${d.submission_status||'draft'}</span></td></tr>
+        <tr><td>Payment Status</td><td><span class="badge-${d.payment_status==='paid'?'ok':'warn'}">${d.payment_status||'unpaid'}</span></td></tr>
+      </tbody></table>
+    </div>
+    <div class="sec">
+      <div class="sec-title">Employee PAYE Detail (${detail.length} employees)</div>
+      <table><thead><tr><th>Employee</th><th>Department</th><th>Gross</th><th>PAYE</th><th>UIF</th><th>SDL</th></tr></thead>
+      <tbody>
+        ${detail.map(r => `<tr>
+          <td>${r.employee_name}</td><td>${r.department||'—'}</td>
+          <td class="r">R ${formatMoney(r.gross_pay)}</td>
+          <td class="r">R ${formatMoney(r.paye)}</td>
+          <td class="r">R ${formatMoney(r.uif)}</td>
+          <td class="r">R ${formatMoney(r.sdl)}</td>
+        </tr>`).join('')}
+        <tr class="tot"><td colspan="2"><strong>TOTALS</strong></td>
+          <td class="r"><strong>R ${formatMoney(detail.reduce((s,r)=>s+toNum(r.gross_pay),0))}</strong></td>
+          <td class="r"><strong>R ${formatMoney(detail.reduce((s,r)=>s+toNum(r.paye),0))}</strong></td>
+          <td class="r"><strong>R ${formatMoney(detail.reduce((s,r)=>s+toNum(r.uif),0))}</strong></td>
+          <td class="r"><strong>R ${formatMoney(detail.reduce((s,r)=>s+toNum(r.sdl),0))}</strong></td>
+        </tr>
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('🏛️ EMP201 PAYE Report', companyName, periodLabel, body));
+  } catch (err) {
+    console.error('exportEMP201PDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+// =====================================================
+// SARS TAX LIABILITY SUMMARY
+// =====================================================
+exports.exportTaxLiabilityExcel = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const companyName = await getCompanyName(companyId);
+
+    const { rows } = await db.query(
+      `SELECT tax_period, employee_count, paye_amount, sdl_amount,
+              uif_employee_amount, uif_employer_amount, uif_total_amount,
+              total_liability, submission_status, payment_status
+       FROM emp201_declarations WHERE company_id=$1 AND tax_year=$2
+       ORDER BY tax_period`,
+      [companyId, year.toString()]
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PeopleOS';
+    const ws = wb.addWorksheet('Tax Liability', { tabColor: { argb: 'FFEF4444' } });
+    ws.columns = [
+      { key: 'period',  width: 12 }, { key: 'emps',  width: 12 },
+      { key: 'paye',    width: 18 }, { key: 'sdl',   width: 16 },
+      { key: 'uif_e',   width: 16 }, { key: 'uif_er',width: 16 },
+      { key: 'uif_tot', width: 16 }, { key: 'total', width: 18 },
+      { key: 'sub',     width: 16 }, { key: 'pay',   width: 14 },
+    ];
+    addTitle(ws, '📑 TAX LIABILITY SUMMARY', 10, `Year ${year}`, companyName);
+    styleHeader(ws.addRow(['Period','Employees','PAYE','SDL','UIF Employee','UIF Employer','UIF Total','Total Liability','Submitted','Paid']));
+
+    rows.forEach((r, i) => {
+      const row = ws.addRow({
+        period: `${shortMonths[parseInt(r.tax_period)]} ${year}`,
+        emps: r.employee_count,
+        paye: toNum(r.paye_amount), sdl: toNum(r.sdl_amount),
+        uif_e: toNum(r.uif_employee_amount), uif_er: toNum(r.uif_employer_amount),
+        uif_tot: toNum(r.uif_total_amount), total: toNum(r.total_liability),
+        sub: r.submission_status, pay: r.payment_status,
+      });
+      ['paye','sdl','uif_e','uif_er','uif_tot','total'].forEach(k => row.getCell(k).numFmt = moneyFmt);
+      altRow(row, i);
+      row.height = 17;
+    });
+
+    if (rows.length > 0) {
+      const s = 5, e2 = 4 + rows.length;
+      const tot = ws.addRow([`YTD TOTALS`, '',
+        `=SUM(C${s}:C${e2})`, `=SUM(D${s}:D${e2})`,
+        `=SUM(E${s}:E${e2})`, `=SUM(F${s}:F${e2})`,
+        `=SUM(G${s}:G${e2})`, `=SUM(H${s}:H${e2})`, '', '']);
+      tot.eachCell(c => Object.assign(c, TOTAL_STYLE));
+      ['C','D','E','F','G','H'].forEach(col => tot.getCell(col).numFmt = moneyFmt);
+    }
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="tax-liability-${year}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('exportTaxLiabilityExcel:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
+
+exports.exportTaxLiabilityPDF = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const companyName = await getCompanyName(companyId);
+
+    const { rows } = await db.query(
+      `SELECT tax_period, employee_count, paye_amount, sdl_amount,
+              uif_total_amount, total_liability, submission_status, payment_status
+       FROM emp201_declarations WHERE company_id=$1 AND tax_year=$2
+       ORDER BY tax_period`,
+      [companyId, year.toString()]
+    );
+
+    const ytdPaye  = rows.reduce((s,r) => s + toNum(r.paye_amount), 0);
+    const ytdSdl   = rows.reduce((s,r) => s + toNum(r.sdl_amount), 0);
+    const ytdUif   = rows.reduce((s,r) => s + toNum(r.uif_total_amount), 0);
+    const ytdTotal = rows.reduce((s,r) => s + toNum(r.total_liability), 0);
+
+    const body = `
+    <div class="sec">
+      <div class="sec-title">📑 TAX LIABILITY SUMMARY — Year ${year}</div>
+      <table><thead><tr><th>Period</th><th>Employees</th><th>PAYE</th><th>SDL</th><th>UIF Total</th><th>Total Liability</th><th>Submitted</th><th>Paid</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr>
+          <td>${shortMonths[parseInt(r.tax_period)]} ${year}</td>
+          <td>${r.employee_count}</td>
+          <td class="r">R ${formatMoney(r.paye_amount)}</td>
+          <td class="r">R ${formatMoney(r.sdl_amount)}</td>
+          <td class="r">R ${formatMoney(r.uif_total_amount)}</td>
+          <td class="r"><strong>R ${formatMoney(r.total_liability)}</strong></td>
+          <td><span class="badge-${r.submission_status==='submitted'?'ok':'warn'}">${r.submission_status}</span></td>
+          <td><span class="badge-${r.payment_status==='paid'?'ok':'warn'}">${r.payment_status}</span></td>
+        </tr>`).join('')}
+        <tr class="tot"><td colspan="2"><strong>YTD TOTALS</strong></td>
+          <td class="r"><strong>R ${formatMoney(ytdPaye)}</strong></td>
+          <td class="r"><strong>R ${formatMoney(ytdSdl)}</strong></td>
+          <td class="r"><strong>R ${formatMoney(ytdUif)}</strong></td>
+          <td class="r"><strong>R ${formatMoney(ytdTotal)}</strong></td>
+          <td colspan="2"></td>
+        </tr>
+      </tbody></table>
+    </div>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(pdfWrapper('📑 Tax Liability Summary', companyName, `Year ${year}`, body));
+  } catch (err) {
+    console.error('exportTaxLiabilityPDF:', err);
+    res.status(500).json({ error: 'Failed', details: err.message });
+  }
+};
