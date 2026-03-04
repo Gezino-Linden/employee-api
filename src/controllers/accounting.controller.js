@@ -19,12 +19,21 @@ exports.getAccounts = async (req, res) => {
 };
 
 // ── GET PAYROLL PERIODS ───────────────────────────────────────
+
 exports.getPeriods = async (req, res) => {
   try {
+    // payroll_periods uses month + year columns, not period_start/period_end
     const result = await pool.query(
-      `SELECT id, period_start, period_end, status
+      `SELECT
+         id,
+         MAKE_DATE(year, month, 1)                       AS period_start,
+         (MAKE_DATE(year, month, 1)
+           + INTERVAL '1 month - 1 day')::date           AS period_end,
+         status,
+         total_employees,
+         total_gross
        FROM payroll_periods
-       ORDER BY period_start DESC
+       ORDER BY year DESC, month DESC
        LIMIT 24`
     );
     res.json({ success: true, count: result.rows.length, data: result.rows });
