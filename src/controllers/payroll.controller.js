@@ -354,6 +354,9 @@ exports.updatePayrollRecord = async (req, res) => {
 };
 
 // ── PROCESS PAYROLL ───────────────────────────────────────────
+// ── PROCESS PAYROLL ───────────────────────────────────────────
+// Replace the existing processPayroll function with this one.
+// Everything else in payroll.controller.js stays the same.
 exports.processPayroll = async (req, res) => {
   let client;
   try {
@@ -366,57 +369,156 @@ exports.processPayroll = async (req, res) => {
       return res.status(400).json({ error: "Month and year are required" });
 
     const monthInt = toInt(month, 0);
-    const yearInt = toInt(year, 0);
+    const yearInt  = toInt(year, 0);
 
     if (!validateMonth(monthInt))
       return res.status(400).json({ error: "Invalid month (1-12)" });
     if (!validateYear(yearInt))
       return res.status(400).json({ error: "Invalid year" });
 
-    if (
-      !employee_ids ||
-      !Array.isArray(employee_ids) ||
-      employee_ids.length === 0
-    )
+    if (!employee_ids || !Array.isArray(employee_ids) || employee_ids.length === 0)
       return res.status(400).json({ error: "Employee IDs array is required" });
 
-    const validIds = employee_ids
-      .map((id) => toInt(id, 0))
-      .filter((id) => id > 0);
+    const validIds = employee_ids.map((id) => toInt(id, 0)).filter((id) => id > 0);
     if (validIds.length !== employee_ids.length)
       return res.status(400).json({ error: "Invalid employee IDs provided" });
 
     client = await db.connect();
     await client.query("BEGIN");
 
-    const result = await client.query(
-      `UPDATE payroll_records
-       SET status = 'processed', updated_at = NOW()
-       WHERE company_id = $1 AND month = $2 AND year = $3
-         AND employee_id = ANY($4) AND status = 'draft'
-       RETURNING id, employee_id`,
+    // ── Fetch current draft payroll records for these employees ──
+    const drafts = await client.query(
+      `SELECT pr.*, e.age, e.custom_tax_rate, e.hourly_rate, e.salary
+       FROM payroll_records pr
+       JOIN employees e ON pr.employee_id = e.id
+       WHERE pr.company_id = $1
+         AND pr.month = $2
+         AND pr.year  = $3
+         AND pr.employee_id = ANY($4)
+         AND pr.status = 'draft'`,
       [companyId, monthInt, yearInt, validIds]
     );
 
-    for (const row of result.rows) {
-      await client.query(
-        `INSERT INTO payroll_audit_log (payroll_record_id, changed_by, action, old_status, new_status, created_at)
-         VALUES ($1, $2, 'process', 'draft', 'processed', NOW())`,
-        [row.id, req.user.id]
+    if (drafts.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "No draft payroll records found for these employees" });
+    }
+
+    const processed = [];
+
+    for (const record of drafts.rows) {
+      // ── 1. Pull shift earnings for this employee/month ──────────
+      const shiftEarnings = await calculateMonthlyShiftPay(
+        companyId,
+        record.employee_id,
+        monthInt,
+        yearInt
       );
+
+      // ── 2. Pull attendance overtime for this employee/month ──────
+      // Sum overtime_pay from attendance_records for the period
+      const attendanceResult = await client.query(
+        `SELECT
+           COALESCE(SUM(overtime_hours), 0) AS total_overtime_hours,
+           COALESCE(SUM(overtime_pay),   0) AS total_overtime_pay
+         FROM attendance_records
+         WHERE company_id  = $1
+           AND employee_id = $2
+           AND EXTRACT(MONTH FROM date) = $3
+           AND EXTRACT(YEAR  FROM date) = $4`,
+        [companyId, record.employee_id, monthInt, yearInt]
+      );
+      const attendance = attendanceResult.rows[0];
+
+      // ── 3. Decide how to apply earnings ─────────────────────────
+      // If employee has shift assignments this month → use shift pay as overtime
+      // If employee has attendance overtime but no shifts → use attendance overtime
+      // If neither → keep whatever was manually entered on the draft record
+      let newOvertime = toNum(record.overtime);
+
+      if (shiftEarnings.shift_count > 0) {
+        // Shift worker: add shift premiums + night pay on top of base salary
+        // base_pay is already covered by basic_salary, so we only add the premium/night uplift
+        newOvertime = toNum(shiftEarnings.night_pay) + toNum(shiftEarnings.shift_premium);
+      } else if (toNum(attendance.total_overtime_pay) > 0) {
+        // Salaried worker with recorded overtime
+        newOvertime = toNum(attendance.total_overtime_pay);
+      }
+
+      // ── 4. Recalculate gross → tax → net ────────────────────────
+      const basicSalary  = toNum(record.basic_salary);
+      const allowances   = toNum(record.allowances);
+      const bonuses      = toNum(record.bonuses);
+      const uif          = toNum(record.uif);
+      const pension      = toNum(record.pension);
+      const medicalAid   = toNum(record.medical_aid);
+      const otherDeduct  = toNum(record.other_deductions);
+
+      const newGross = basicSalary + allowances + bonuses + newOvertime;
+
+      const newTax = record.custom_tax_rate
+        ? newGross * (record.custom_tax_rate / 100)
+        : calculateTax(newGross, record.age || 30);
+
+      const newTotalDeductions = newTax + uif + pension + medicalAid + otherDeduct;
+      const newNet = newGross - newTotalDeductions;
+
+      // ── 5. Update the payroll record ─────────────────────────────
+      const updated = await client.query(
+        `UPDATE payroll_records
+         SET status           = 'processed',
+             overtime         = $1,
+             gross_pay        = $2,
+             tax              = $3,
+             total_deductions = $4,
+             net_pay          = $5,
+             updated_at       = NOW()
+         WHERE id         = $6
+           AND company_id = $7
+         RETURNING id, employee_id`,
+        [
+          newOvertime,
+          newGross,
+          newTax,
+          newTotalDeductions,
+          newNet,
+          record.id,
+          companyId,
+        ]
+      );
+
+      // ── 6. Audit log ─────────────────────────────────────────────
+      await client.query(
+        `INSERT INTO payroll_audit_log
+           (payroll_record_id, changed_by, action, old_status, new_status,
+            old_values, new_values, notes, created_at)
+         VALUES ($1, $2, 'process', 'draft', 'processed', $3, $4, $5, NOW())`,
+        [
+          record.id,
+          req.user.id,
+          JSON.stringify({ status: 'draft', overtime: record.overtime, gross_pay: record.gross_pay, net_pay: record.net_pay }),
+          JSON.stringify({ status: 'processed', overtime: newOvertime, gross_pay: newGross, net_pay: newNet }),
+          shiftEarnings.shift_count > 0
+            ? `Shift earnings applied: ${shiftEarnings.shift_count} shifts, night pay R${shiftEarnings.night_pay}, premium R${shiftEarnings.shift_premium}`
+            : toNum(attendance.total_overtime_pay) > 0
+            ? `Attendance overtime applied: ${attendance.total_overtime_hours}h = R${attendance.total_overtime_pay}`
+            : 'No shift/overtime data — processed from base salary',
+        ]
+      );
+
+      processed.push(updated.rows[0]);
     }
 
     await client.query("COMMIT");
+
     return res.json({
-      message: `Processed ${result.rows.length} payroll records`,
-      count: result.rows.length,
-      processed_ids: result.rows.map((r) => r.employee_id),
+      message: `Processed ${processed.length} payroll records`,
+      count: processed.length,
+      processed_ids: processed.map((r) => r.employee_id),
     });
   } catch (err) {
     if (client) await client.query("ROLLBACK");
-    return res
-      .status(500)
-      .json({ error: "Failed to process payroll", details: err.message });
+    return res.status(500).json({ error: "Failed to process payroll", details: err.message });
   } finally {
     if (client) client.release();
   }
