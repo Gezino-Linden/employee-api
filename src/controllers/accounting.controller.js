@@ -1,29 +1,52 @@
 // File: src/controllers/accounting.controller.js
-const { Pool } = require("pg");
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const db = require("../db");
+const cache = require("../utils/cache");
 
 function toNum(v) {
   return parseFloat(v) || 0;
 }
 
+const CACHE_TTL = {
+  ACCOUNTS: 600, // 10 minutes — chart of accounts rarely changes
+  MAPPINGS: 600, // 10 minutes — GL mappings rarely change
+};
+
 // ── GET CHART OF ACCOUNTS ─────────────────────────────────────
 exports.getAccounts = async (req, res) => {
   try {
-    const result = await pool.query(
+    const companyId = req.user?.company_id;
+    if (!companyId)
+      return res.status(400).json({ error: "Company ID not found" });
+
+    const cacheKey = `accounts:${companyId}`;
+    const cached = cache.get(cacheKey);
+    if (cached)
+      return res.json({
+        success: true,
+        count: cached.length,
+        data: cached,
+        cached: true,
+      });
+
+    const result = await db.query(
       "SELECT id, code, name, account_type FROM chart_of_accounts WHERE is_active = true ORDER BY code"
     );
-    res.json({ success: true, count: result.rows.length, data: result.rows });
+
+    cache.set(cacheKey, result.rows, CACHE_TTL.ACCOUNTS);
+    return res.json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows,
+    });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 
 // ── GET PAYROLL PERIODS ───────────────────────────────────────
-
 exports.getPeriods = async (req, res) => {
   try {
-    // payroll_periods uses month + year columns, not period_start/period_end
-    const result = await pool.query(
+    const result = await db.query(
       `SELECT
          id,
          MAKE_DATE(year, month, 1)                       AS period_start,
@@ -36,16 +59,34 @@ exports.getPeriods = async (req, res) => {
        ORDER BY year DESC, month DESC
        LIMIT 24`
     );
-    res.json({ success: true, count: result.rows.length, data: result.rows });
+    return res.json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows,
+    });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 
 // ── GET GL MAPPINGS ───────────────────────────────────────────
 exports.getMappings = async (req, res) => {
   try {
-    const result = await pool.query(`
+    const companyId = req.user?.company_id;
+    if (!companyId)
+      return res.status(400).json({ error: "Company ID not found" });
+
+    const cacheKey = `mappings:${companyId}`;
+    const cached = cache.get(cacheKey);
+    if (cached)
+      return res.json({
+        success: true,
+        count: cached.length,
+        data: cached,
+        cached: true,
+      });
+
+    const result = await db.query(`
       SELECT
         pgm.payroll_item_type,
         d.code as debit_code,  d.name as debit_name,
@@ -58,9 +99,15 @@ exports.getMappings = async (req, res) => {
       LEFT JOIN departments dept     ON pgm.department_id      = dept.id
       ORDER BY pgm.payroll_item_type
     `);
-    res.json({ success: true, count: result.rows.length, data: result.rows });
+
+    cache.set(cacheKey, result.rows, CACHE_TTL.MAPPINGS);
+    return res.json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows,
+    });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 
@@ -83,7 +130,7 @@ exports.generateJournal = async (req, res) => {
   }
 
   try {
-    const periodCheck = await pool.query(
+    const periodCheck = await db.query(
       "SELECT id, period_start, period_end FROM payroll_periods WHERE id = $1",
       [payroll_period_id]
     );
@@ -113,7 +160,7 @@ exports.generateJournal = async (req, res) => {
       queryParams.push(property_id);
     }
 
-    const payrollData = await pool.query(payrollQuery, queryParams);
+    const payrollData = await db.query(payrollQuery, queryParams);
     if (payrollData.rows.length === 0) {
       return res
         .status(404)
@@ -192,7 +239,7 @@ exports.generateJournal = async (req, res) => {
     let totalCredits = totalTax + totalPension + totalUIF + totalNet;
 
     if (type === "hospitality") {
-      const tipsResult = await pool.query(
+      const tipsResult = await db.query(
         `SELECT
           COALESCE(SUM(tips_cash), 0) as total_tips_cash,
           COALESCE(SUM(tips_card), 0) as total_tips_card
@@ -208,7 +255,7 @@ exports.generateJournal = async (req, res) => {
           : [period.period_start, period.period_end]
       );
 
-      const serviceChargeResult = await pool.query(
+      const serviceChargeResult = await db.query(
         `SELECT COALESCE(SUM(total_amount), 0) as total_service_charge
          FROM tip_pools
          WHERE pool_type = 'service_charge'
@@ -263,7 +310,7 @@ exports.generateJournal = async (req, res) => {
       totalCredits += totalTipsCash + totalTipsCard + totalServiceCharge;
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: {
         journal_id: `JE-${type.toUpperCase()}-${payroll_period_id}`,
@@ -292,7 +339,7 @@ exports.generateJournal = async (req, res) => {
     });
   } catch (err) {
     console.error("generateJournal error:", err);
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 
@@ -300,7 +347,7 @@ exports.generateJournal = async (req, res) => {
 exports.exportJournal = async (req, res) => {
   const { format, payroll_period_id, type = "standard" } = req.query;
   try {
-    const result = await pool.query(
+    const result = await db.query(
       `SELECT
         pp.period_start, pp.period_end,
         SUM(pr.gross_salary)       as total_gross,
@@ -338,7 +385,7 @@ exports.exportJournal = async (req, res) => {
     }
     return res.json({ success: true, data: row });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 
@@ -357,7 +404,7 @@ exports.getPL = async (req, res) => {
       propertyFilter = ` AND property_id = $${revenueParams.length}`;
     }
 
-    const revenue = await pool.query(
+    const revenue = await db.query(
       `SELECT
         COALESCE(SUM(rooms_revenue),  0) as rooms,
         COALESCE(SUM(fb_revenue),     0) as fb,
@@ -372,7 +419,7 @@ exports.getPL = async (req, res) => {
       revenueParams
     );
 
-    const costs = await pool.query(
+    const costs = await db.query(
       `SELECT
         category,
         COALESCE(SUM(subtotal),     0) as subtotal,
@@ -384,7 +431,7 @@ exports.getPL = async (req, res) => {
       [companyId, from, to]
     );
 
-    const payroll = await pool.query(
+    const payroll = await db.query(
       `SELECT
         COALESCE(SUM(gross_pay), 0) as gross_payroll,
         COALESCE(SUM(net_pay),   0) as net_payroll,
@@ -441,7 +488,7 @@ exports.getPL = async (req, res) => {
     });
   } catch (err) {
     console.error("getPL error:", err);
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 
@@ -456,7 +503,7 @@ exports.getVATReturn = async (req, res) => {
     const m = parseInt(month);
     const y = parseInt(year);
 
-    const output = await pool.query(
+    const output = await db.query(
       `SELECT COUNT(*) as transaction_count, COALESCE(SUM(gross_amount),0) as gross,
               COALESCE(SUM(vat_amount),0) as vat, COALESCE(SUM(net_amount),0) as net
        FROM vat_transactions
@@ -465,7 +512,7 @@ exports.getVATReturn = async (req, res) => {
       [companyId, m, y]
     );
 
-    const input = await pool.query(
+    const input = await db.query(
       `SELECT COUNT(*) as transaction_count, COALESCE(SUM(gross_amount),0) as gross,
               COALESCE(SUM(vat_amount),0) as vat, COALESCE(SUM(net_amount),0) as net
        FROM vat_transactions
@@ -474,15 +521,14 @@ exports.getVATReturn = async (req, res) => {
       [companyId, m, y]
     );
 
-    // Fallback: pull directly from invoices if vat_transactions is empty
-    const invoiceVat = await pool.query(
+    const invoiceVat = await db.query(
       `SELECT COALESCE(SUM(vat_amount), 0) as vat FROM invoices
        WHERE company_id = $1 AND EXTRACT(MONTH FROM invoice_date) = $2
          AND EXTRACT(YEAR FROM invoice_date) = $3 AND status IN ('paid','partial','sent')`,
       [companyId, m, y]
     );
 
-    const apVat = await pool.query(
+    const apVat = await db.query(
       `SELECT COALESCE(SUM(vat_amount), 0) as vat FROM ap_invoices
        WHERE company_id = $1 AND EXTRACT(MONTH FROM invoice_date) = $2
          AND EXTRACT(YEAR FROM invoice_date) = $3 AND status != 'cancelled'`,
@@ -537,7 +583,7 @@ exports.getVATReturn = async (req, res) => {
     });
   } catch (err) {
     console.error("getVATReturn error:", err);
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 
@@ -563,28 +609,25 @@ exports.getVATTransactions = async (req, res) => {
     }
     if (year) {
       idx++;
-      query += ` AND vat_period_year = $${idx}`;
+      query += ` AND vat_period_year  = $${idx}`;
       params.push(parseInt(year));
     }
 
     query += ` ORDER BY transaction_date DESC`;
-    const result = await pool.query(query, params);
+    const result = await db.query(query, params);
     return res.json({
       success: true,
       count: result.rows.length,
       data: result.rows,
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
+
 // ── CLOSE MONTH-END PERIOD ────────────────────────────────────
-// Add this to the bottom of accounting.controller.js
-// Route: POST /api/accounting/period/close
-// Body: { month, year }
-// ─────────────────────────────────────────────────────────────
 exports.closePeriod = async (req, res) => {
-  const client = await pool.connect();
+  const client = await db.connect();
   try {
     const companyId = req.user?.company_id;
     const { month, year } = req.body;
@@ -597,13 +640,11 @@ exports.closePeriod = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // 1. Check period isn't already closed
     const existing = await client.query(
       `SELECT id, status FROM accounting_periods
        WHERE company_id = $1 AND period_month = $2 AND period_year = $3`,
       [companyId, m, y]
     );
-
     if (existing.rows.length > 0 && existing.rows[0].status === "closed") {
       await client.query("ROLLBACK");
       return res.status(409).json({
@@ -612,42 +653,28 @@ exports.closePeriod = async (req, res) => {
       });
     }
 
-    // 2. Snapshot VAT — output VAT (from invoices paid this period)
     const outputVat = await client.query(
-      `SELECT COALESCE(SUM(vat_amount), 0) as vat
-       FROM vat_transactions
-       WHERE company_id = $1
-         AND transaction_type = 'output'
-         AND vat_period_month = $2
-         AND vat_period_year  = $3`,
+      `SELECT COALESCE(SUM(vat_amount), 0) as vat FROM vat_transactions
+       WHERE company_id = $1 AND transaction_type = 'output'
+         AND vat_period_month = $2 AND vat_period_year = $3`,
       [companyId, m, y]
     );
-
-    // 3. Snapshot VAT — input VAT (from bills this period)
     const inputVat = await client.query(
-      `SELECT COALESCE(SUM(vat_amount), 0) as vat
-       FROM vat_transactions
-       WHERE company_id = $1
-         AND transaction_type = 'input'
-         AND vat_period_month = $2
-         AND vat_period_year  = $3`,
+      `SELECT COALESCE(SUM(vat_amount), 0) as vat FROM vat_transactions
+       WHERE company_id = $1 AND transaction_type = 'input'
+         AND vat_period_month = $2 AND vat_period_year = $3`,
       [companyId, m, y]
     );
-
-    // Fallback to invoices/ap_invoices if vat_transactions is sparse
     const invVat = await client.query(
-      `SELECT COALESCE(SUM(vat_amount), 0) as vat
-       FROM invoices
+      `SELECT COALESCE(SUM(vat_amount), 0) as vat FROM invoices
        WHERE company_id = $1
          AND EXTRACT(MONTH FROM invoice_date) = $2
          AND EXTRACT(YEAR  FROM invoice_date) = $3
          AND status IN ('paid','partial','sent')`,
       [companyId, m, y]
     );
-
     const apVat = await client.query(
-      `SELECT COALESCE(SUM(vat_amount), 0) as vat
-       FROM ap_invoices
+      `SELECT COALESCE(SUM(vat_amount), 0) as vat FROM ap_invoices
        WHERE company_id = $1
          AND EXTRACT(MONTH FROM invoice_date) = $2
          AND EXTRACT(YEAR  FROM invoice_date) = $3
@@ -655,11 +682,12 @@ exports.closePeriod = async (req, res) => {
       [companyId, m, y]
     );
 
-    const finalOutputVat = toNum(outputVat.rows[0].vat) || toNum(invVat.rows[0].vat);
-    const finalInputVat  = toNum(inputVat.rows[0].vat)  || toNum(apVat.rows[0].vat);
-    const vatPayable     = finalOutputVat - finalInputVat;
+    const finalOutputVat =
+      toNum(outputVat.rows[0].vat) || toNum(invVat.rows[0].vat);
+    const finalInputVat =
+      toNum(inputVat.rows[0].vat) || toNum(apVat.rows[0].vat);
+    const vatPayable = finalOutputVat - finalInputVat;
 
-    // 4. Snapshot revenue totals for this period
     const revenue = await client.query(
       `SELECT
          COALESCE(SUM(total_revenue), 0) as total_revenue,
@@ -673,7 +701,6 @@ exports.closePeriod = async (req, res) => {
       [companyId, m, y]
     );
 
-    // 5. Snapshot payroll costs
     const payroll = await client.query(
       `SELECT
          COALESCE(SUM(gross_pay), 0) as gross,
@@ -686,7 +713,6 @@ exports.closePeriod = async (req, res) => {
       [companyId, m, y]
     );
 
-    // 6. Upsert the accounting_periods record and mark closed
     const period = await client.query(
       `INSERT INTO accounting_periods
          (company_id, period_month, period_year, status,
@@ -708,7 +734,9 @@ exports.closePeriod = async (req, res) => {
          closed_at     = NOW()
        RETURNING *`,
       [
-        companyId, m, y,
+        companyId,
+        m,
+        y,
         toNum(revenue.rows[0].total_revenue),
         toNum(revenue.rows[0].total_costs),
         toNum(payroll.rows[0].gross),
@@ -720,7 +748,6 @@ exports.closePeriod = async (req, res) => {
       ]
     );
 
-    // 7. Lock all daily_revenue entries for this period
     await client.query(
       `UPDATE daily_revenue
        SET status = 'locked', updated_at = NOW()
@@ -730,20 +757,32 @@ exports.closePeriod = async (req, res) => {
       [companyId, m, y]
     );
 
-    // 8. Post VAT payable as a GL liability line
     if (vatPayable > 0) {
-      const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const monthNames = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
       try {
         await client.query(
           `INSERT INTO gl_journal_lines
              (company_id, journal_date, reference, account_code, account_name,
               debit, credit, category, source_type, source_id, created_by)
            VALUES
-             ($1, NOW(), $2, '2200', 'VAT Control Account',   $3, 0,  'vat', 'period_close', $4, $5),
-             ($1, NOW(), $2, '2210', 'SARS VAT Payable',       0, $3, 'vat', 'period_close', $4, $5)`,
+             ($1,NOW(),$2,'2200','VAT Control Account', $3, 0,  'vat','period_close',$4,$5),
+             ($1,NOW(),$2,'2210','SARS VAT Payable',     0, $3, 'vat','period_close',$4,$5)`,
           [
             companyId,
-            `VAT-CLOSE-${monthNames[m-1]}-${y}`,
+            `VAT-CLOSE-${monthNames[m - 1]}-${y}`,
             vatPayable,
             period.rows[0].id,
             req.user.id,
@@ -754,6 +793,10 @@ exports.closePeriod = async (req, res) => {
       }
     }
 
+    // Invalidate accounts and mappings cache after period close
+    cache.del(`accounts:${companyId}`);
+    cache.del(`mappings:${companyId}`);
+
     await client.query("COMMIT");
 
     return res.json({
@@ -761,21 +804,46 @@ exports.closePeriod = async (req, res) => {
       message: `Period ${month}/${year} closed successfully`,
       period: period.rows[0],
       summary: {
-        total_revenue:  toNum(revenue.rows[0].total_revenue),
-        total_costs:    toNum(revenue.rows[0].total_costs),
-        payroll_cost:   toNum(payroll.rows[0].gross),
-        output_vat:     finalOutputVat,
-        input_vat:      finalInputVat,
-        vat_payable:    vatPayable > 0 ? vatPayable : 0,
+        total_revenue: toNum(revenue.rows[0].total_revenue),
+        total_costs: toNum(revenue.rows[0].total_costs),
+        payroll_cost: toNum(payroll.rows[0].gross),
+        output_vat: finalOutputVat,
+        input_vat: finalInputVat,
+        vat_payable: vatPayable > 0 ? vatPayable : 0,
         vat_refundable: vatPayable < 0 ? Math.abs(vatPayable) : 0,
-        avg_occupancy:  toNum(revenue.rows[0].avg_occupancy),
+        avg_occupancy: toNum(revenue.rows[0].avg_occupancy),
       },
     });
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("closePeriod error:", err);
-    return res.status(500).json({ error: "Failed to close period", details: err.message });
+    return res
+      .status(500)
+      .json({ error: "Failed to close period", details: err.message });
   } finally {
     client.release();
+  }
+};
+
+// ── CHECK PERIOD STATUS ───────────────────────────────────────
+exports.getPeriodStatus = async (req, res) => {
+  try {
+    const companyId = req.user?.company_id;
+    const { month, year } = req.query;
+    if (!month || !year)
+      return res.status(400).json({ error: "month and year are required" });
+
+    const result = await db.query(
+      `SELECT * FROM accounting_periods
+       WHERE company_id = $1 AND period_month = $2 AND period_year = $3`,
+      [companyId, parseInt(month), parseInt(year)]
+    );
+
+    if (result.rows.length === 0) return res.json({ status: "open" });
+    return res.json(result.rows[0]);
+  } catch (err) {
+    return res
+      .status(500)
+      .json({ error: "Failed to check period status", details: err.message });
   }
 };

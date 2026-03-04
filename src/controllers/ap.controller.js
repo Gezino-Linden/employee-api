@@ -1,15 +1,30 @@
 // File: src/controllers/ap.controller.js
+const cache = require("../utils/cache");
 const db = require("../db");
 
 function toNum(v) {
   return parseFloat(v) || 0;
 }
 
+const CACHE_TTL = {
+  SUPPLIERS: 180, // 3 minutes
+};
+
 // ── GET SUPPLIERS ─────────────────────────────────────────────
 exports.getSuppliers = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
     const { search, category, active = "true" } = req.query;
+
+    // Only cache the default unfiltered list (search/category bypass cache)
+    const isDefaultQuery = !search && !category && active === "true";
+    const cacheKey = `suppliers:${companyId}`;
+
+    if (isDefaultQuery) {
+      const cached = cache.get(cacheKey);
+      if (cached)
+        return res.json({ data: cached, count: cached.length, cached: true });
+    }
 
     let query = `SELECT * FROM ap_suppliers WHERE company_id = $1`;
     const params = [companyId];
@@ -33,6 +48,11 @@ exports.getSuppliers = async (req, res) => {
 
     query += ` ORDER BY name`;
     const result = await db.query(query, params);
+
+    if (isDefaultQuery) {
+      cache.set(cacheKey, result.rows, CACHE_TTL.SUPPLIERS);
+    }
+
     return res.json({ data: result.rows, count: result.rows.length });
   } catch (err) {
     return res
@@ -82,6 +102,10 @@ exports.createSupplier = async (req, res) => {
         payment_terms,
       ]
     );
+
+    // Invalidate suppliers cache so next load gets fresh data
+    cache.del(`suppliers:${companyId}`);
+
     return res
       .status(201)
       .json({ message: "Supplier created", supplier: result.rows[0] });
@@ -139,8 +163,13 @@ exports.updateSupplier = async (req, res) => {
         companyId,
       ]
     );
+
     if (result.rows.length === 0)
       return res.status(404).json({ error: "Supplier not found" });
+
+    // Invalidate suppliers cache so next load gets fresh data
+    cache.del(`suppliers:${companyId}`);
+
     return res.json({ message: "Supplier updated", supplier: result.rows[0] });
   } catch (err) {
     return res
@@ -236,15 +265,12 @@ exports.createBill = async (req, res) => {
     } = req.body;
 
     if (!supplier_id || !description || !invoice_date || !subtotal) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "supplier_id, description, invoice_date and subtotal are required",
-        });
+      return res.status(400).json({
+        error:
+          "supplier_id, description, invoice_date and subtotal are required",
+      });
     }
 
-    // Verify supplier belongs to company
     const sup = await db.query(
       `SELECT id FROM ap_suppliers WHERE id = $1 AND company_id = $2`,
       [supplier_id, companyId]
@@ -281,7 +307,6 @@ exports.createBill = async (req, res) => {
       ]
     );
 
-    // Auto-create input VAT transaction
     if (vat > 0) {
       const d = new Date(invoice_date);
       await client.query(
@@ -320,14 +345,13 @@ exports.createBill = async (req, res) => {
 };
 
 // ── PAY BILL ──────────────────────────────────────────────────
-// ── PAY BILL (patched) ────────────────────────────────────────
-// Replace the existing payBill export in ap.controller.js
 exports.payBill = async (req, res) => {
   const client = await db.connect();
   try {
     const companyId = req.user?.company_id;
     const { id } = req.params;
-    const { payment_date, payment_method, payment_reference, amount } = req.body;
+    const { payment_date, payment_method, payment_reference, amount } =
+      req.body;
 
     if (!payment_method)
       return res.status(400).json({ error: "payment_method is required" });
@@ -343,27 +367,33 @@ exports.payBill = async (req, res) => {
 
     await client.query("BEGIN");
 
-    const paid      = toNum(amount) || toNum(bill.rows[0].balance_due);
+    const paid = toNum(amount) || toNum(bill.rows[0].balance_due);
     const totalPaid = toNum(bill.rows[0].amount_paid) + paid;
-    const balance   = Math.max(0, toNum(bill.rows[0].total_amount) - totalPaid);
+    const balance = Math.max(0, toNum(bill.rows[0].total_amount) - totalPaid);
     const newStatus = balance <= 0 ? "paid" : "pending";
-    const pDate     = payment_date
+    const pDate = payment_date
       ? new Date(payment_date).toISOString().split("T")[0]
       : new Date().toISOString().split("T")[0];
 
-    // 1. Update bill record
     const result = await client.query(
       `UPDATE ap_invoices SET
         status = $1, amount_paid = $2, balance_due = $3,
         payment_date = $4, payment_method = $5, payment_reference = $6, updated_at = NOW()
        WHERE id = $7 AND company_id = $8 RETURNING *`,
-      [newStatus, totalPaid, balance, pDate, payment_method, payment_reference, id, companyId]
+      [
+        newStatus,
+        totalPaid,
+        balance,
+        pDate,
+        payment_method,
+        payment_reference,
+        id,
+        companyId,
+      ]
     );
 
     const updatedBill = result.rows[0];
 
-    // 2. Post cost to daily_revenue so P&L picks it up automatically
-    //    Uses UPSERT — adds to existing day entry or creates one
     if (newStatus === "paid") {
       try {
         await client.query(
@@ -386,7 +416,6 @@ exports.payBill = async (req, res) => {
           ]
         );
       } catch (costErr) {
-        // Non-fatal — log but don't roll back the payment
         console.warn("daily_revenue cost post skipped:", costErr.message);
       }
     }

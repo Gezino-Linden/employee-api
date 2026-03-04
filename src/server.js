@@ -2,12 +2,10 @@
 // STEP 1: ENVIRONMENT & VALIDATION (MUST BE FIRST)
 // ═══════════════════════════════════════════════════════════════
 
-// Load .env first
 if (process.env.NODE_ENV !== "production") {
   require("dotenv").config();
 }
 
-// Validate environment variables BEFORE starting server
 const validateEnv = require("./config/validateEnv");
 validateEnv();
 
@@ -21,12 +19,12 @@ const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./swagger");
 
-// Logging and error handling
 const logger = require("./utils/logger");
 const { errorHandler, notFoundHandler } = require("./middleware/errorHandler");
-
-// Security middleware
 const { apiLimiter, authLimiter } = require("./middleware/rateLimiter");
+const cache = require("./utils/cache");
+const db = require("./db");
+const { requireAuth } = require("./middleware");
 
 // Routes
 const companiesRoutes = require("./routes/companies.routes");
@@ -47,15 +45,11 @@ const invoicesRoutes = require("./routes/invoices.routes");
 const apRoutes = require("./routes/ap.routes");
 const revenueRoutes = require("./routes/revenue.routes");
 
-const db = require("./db");
-const { requireAuth } = require("./middleware");
-
 // ═══════════════════════════════════════════════════════════════
 // STEP 3: EXPRESS APP SETUP
 // ═══════════════════════════════════════════════════════════════
 
 const app = express();
-
 app.set("trust proxy", 1);
 
 // ═══════════════════════════════════════════════════════════════
@@ -85,20 +79,12 @@ app.use(cors(corsOptions));
 // STEP 5: SECURITY MIDDLEWARE
 // ═══════════════════════════════════════════════════════════════
 
-// Body parsing
 app.use(express.json({ limit: "1mb" }));
-
-// Helmet security headers
 app.use(helmet());
-
-// Rate limiting - Apply to all API routes
 app.use("/api/", apiLimiter);
 
-// OPTIONS preflight
 app.use((req, res, next) => {
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
-  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
 
@@ -110,7 +96,6 @@ app.get("/", (req, res) => res.send("Employee API running 🚀"));
 
 app.get("/health", async (req, res) => {
   try {
-    // Check database health using the new method
     const dbHealth = await db.checkHealth();
 
     const healthStatus = {
@@ -121,6 +106,9 @@ app.get("/health", async (req, res) => {
         used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
         total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
         unit: "MB",
+      },
+      cache: {
+        entries: cache.size(),
       },
       database: {
         status: dbHealth.healthy ? "connected" : "disconnected",
@@ -134,17 +122,16 @@ app.get("/health", async (req, res) => {
     };
 
     const statusCode = dbHealth.healthy ? 200 : 503;
-    res.status(statusCode).json(healthStatus);
+    return res.status(statusCode).json(healthStatus);
   } catch (err) {
     logger.error("Health check failed", { error: err.message });
-    res.status(503).json({
+    return res.status(503).json({
       status: "unhealthy",
       timestamp: new Date().toISOString(),
       error: err.message,
     });
   }
 });
-
 
 // Swagger docs
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
@@ -177,12 +164,10 @@ app.get("/api/me", requireAuth, async (req, res) => {
 // STEP 8: ROUTES
 // ═══════════════════════════════════════════════════════════════
 
-// Auth routes with STRICT rate limiting
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/register", authLimiter);
 app.use("/api/auth", authRoutes);
 
-// Other API routes (general rate limiting already applied)
 app.use("/api/users", usersRoutes);
 app.use("/api/employees", employeesRoutes);
 app.use("/api/reports", reportsRoutes);
@@ -204,10 +189,7 @@ app.use("/api/revenue", revenueRoutes);
 // STEP 9: ERROR HANDLING (MUST BE AFTER ALL ROUTES)
 // ═══════════════════════════════════════════════════════════════
 
-// 404 handler for undefined routes
 app.use(notFoundHandler);
-
-// Global error handler (MUST BE LAST)
 app.use(errorHandler);
 
 // ═══════════════════════════════════════════════════════════════

@@ -1,4 +1,5 @@
 // File: src/controllers/invoices.controller.js
+const cache = require("../utils/cache");
 const db = require("../db");
 
 // ── HELPERS ──────────────────────────────────────────────────
@@ -476,9 +477,15 @@ exports.recordPayment = async (req, res) => {
 // ── GET REVENUE CATEGORIES ────────────────────────────────────
 exports.getCategories = async (req, res) => {
   try {
+    const cacheKey = `revenue_categories`;
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json({ data: cached, cached: true });
+
     const result = await db.query(
       `SELECT * FROM revenue_categories WHERE is_active = true ORDER BY sort_order`
     );
+
+    cache.set(cacheKey, result.rows, CACHE_TTL.CATEGORIES);
     return res.json({ data: result.rows });
   } catch (err) {
     return res
@@ -486,6 +493,7 @@ exports.getCategories = async (req, res) => {
       .json({ error: "Failed to fetch categories", details: err.message });
   }
 };
+
 
 // ── AR SUMMARY ────────────────────────────────────────────────
 exports.getARSummary = async (req, res) => {
