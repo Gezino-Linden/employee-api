@@ -100,6 +100,8 @@ app.get("/health", async (req, res) => {
 
     const healthStatus = {
       status: dbHealth.healthy ? "healthy" : "unhealthy",
+      version: process.env.npm_package_version || "1.0.0",
+      environment: process.env.NODE_ENV || "development",
       timestamp: new Date().toISOString(),
       uptime: Math.floor(process.uptime()),
       memory: {
@@ -112,6 +114,7 @@ app.get("/health", async (req, res) => {
       },
       database: {
         status: dbHealth.healthy ? "connected" : "disconnected",
+
         responseTime: dbHealth.responseTime,
         connections: {
           total: dbHealth.totalConnections,
