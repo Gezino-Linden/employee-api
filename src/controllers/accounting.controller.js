@@ -152,7 +152,7 @@ exports.generateJournal = async (req, res) => {
 
     let payrollQuery = `
       SELECT
-        pr.gross_salary, pr.paye_tax, pr.pension_employee, pr.uif_employee, pr.net_salary,
+        pr.gross_pay, pr.tax, pr.pension, pr.uif, pr.net_pay,
         d.code as dept_code, d.name as dept_name,
         p.id as property_id, p.name as property_name
       FROM payroll_records pr
@@ -160,7 +160,7 @@ exports.generateJournal = async (req, res) => {
       LEFT JOIN departments d ON UPPER(e.department) = d.code
       LEFT JOIN employee_properties ep ON e.id = ep.employee_id AND ep.is_primary = true
       LEFT JOIN properties p ON ep.property_id = p.id
-      WHERE pr.payroll_period_id = $1
+      WHERE pr.period_id = $1
     `;
     const queryParams = [payroll_period_id];
     if (property_id) {
@@ -182,11 +182,11 @@ exports.generateJournal = async (req, res) => {
     const deptBreakdown = {};
 
     payrollData.rows.forEach((row) => {
-      totalGross += toNum(row.gross_salary);
-      totalTax += toNum(row.paye_tax);
-      totalPension += toNum(row.pension_employee);
-      totalUIF += toNum(row.uif_employee);
-      totalNet += toNum(row.net_salary);
+      totalGross += toNum(row.gross_pay);
+      totalTax += toNum(row.tax);
+      totalPension += toNum(row.pension);
+      totalUIF += toNum(row.uif);
+      totalNet += toNum(row.net_pay);
 
       const dept = row.dept_code || "GENERAL";
       if (!deptBreakdown[dept])
@@ -195,7 +195,7 @@ exports.generateJournal = async (req, res) => {
           gross: 0,
           count: 0,
         };
-      deptBreakdown[dept].gross += toNum(row.gross_salary);
+      deptBreakdown[dept].gross += toNum(row.gross_pay);
       deptBreakdown[dept].count += 1;
     });
 
@@ -360,13 +360,13 @@ exports.exportJournal = async (req, res) => {
       `SELECT
         MAKE_DATE(pp.year, pp.month, 1)                          AS period_start,
         (MAKE_DATE(pp.year, pp.month, 1) + INTERVAL '1 month - 1 day')::date AS period_end,
-        SUM(pr.gross_salary)     as total_gross,
-        SUM(pr.paye_tax)         as total_tax,
-        SUM(pr.pension_employee) as total_pension,
-        SUM(pr.uif_employee)     as total_uif,
-        SUM(pr.net_salary)       as total_net
+        SUM(pr.gross_pay)     as total_gross,
+        SUM(pr.tax)         as total_tax,
+        SUM(pr.pension) as total_pension,
+        SUM(pr.uif)     as total_uif,
+        SUM(pr.net_pay)       as total_net
        FROM payroll_records pr
-       JOIN payroll_periods pp ON pr.payroll_period_id = pp.id
+       JOIN payroll_periods pp ON pr.period_id = pp.id
        WHERE pp.id = $1
        GROUP BY pp.year, pp.month`,
       [payroll_period_id]
