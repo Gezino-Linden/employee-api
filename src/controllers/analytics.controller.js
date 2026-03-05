@@ -51,8 +51,8 @@ function getDateRange(period) {
 exports.getDashboardOverview = async (req, res) => {
   try {
     const companyId = req.user.company_id;
-    const year = req.query.year || new Date().getFullYear();
-    const month = req.query.month || new Date().getMonth() + 1;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
 
     // Employee Stats
     const employees = await db.query(
@@ -135,7 +135,7 @@ exports.getDashboardOverview = async (req, res) => {
 exports.getPayrollAnalytics = async (req, res) => {
   try {
     const companyId = req.user.company_id;
-    const year = req.query.year || new Date().getFullYear();
+    const year = parseInt(req.query.year) || new Date().getFullYear();
 
     // Monthly payroll trend
     const monthlyTrend = await db.query(
@@ -221,7 +221,7 @@ exports.getPayrollAnalytics = async (req, res) => {
 exports.getLeaveAnalytics = async (req, res) => {
   try {
     const companyId = req.user.company_id;
-    const year = req.query.year || new Date().getFullYear();
+    const year = parseInt(req.query.year) || new Date().getFullYear();
 
     // Leave type breakdown
     const leaveTypes = await db.query(
@@ -303,8 +303,8 @@ exports.getLeaveAnalytics = async (req, res) => {
 exports.getAttendanceAnalytics = async (req, res) => {
   try {
     const companyId = req.user.company_id;
-    const year = req.query.year || new Date().getFullYear();
-    const month = req.query.month || new Date().getMonth() + 1;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
 
     // Daily attendance for current month
     const dailyAttendance = await db.query(
@@ -396,7 +396,7 @@ exports.getAttendanceAnalytics = async (req, res) => {
 exports.getComplianceAnalytics = async (req, res) => {
   try {
     const companyId = req.user.company_id;
-    const year = req.query.year || new Date().getFullYear();
+    const year = parseInt(req.query.year) || new Date().getFullYear();
 
     // EMP201 submissions
     const emp201Stats = await db.query(
@@ -584,3 +584,4 @@ async function getComplianceReport(companyId, year) {
   // Implementation here
   return { message: "Compliance report data" };
 }
+
