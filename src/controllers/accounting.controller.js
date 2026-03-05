@@ -13,7 +13,7 @@ function toNum(v) {
   return parseFloat(v) || 0;
 }
 
-// ── GET CHART OF ACCOUNTS ─────────────────────────────────────
+// ── GET CHART OF ACCOUNTS ──────────────────────────────────────────────────
 exports.getAccounts = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -45,15 +45,18 @@ exports.getAccounts = async (req, res) => {
   }
 };
 
-// ── GET PAYROLL PERIODS ───────────────────────────────────────
+// ── GET PAYROLL PERIODS ────────────────────────────────────────────────────
+// FIX: payroll_periods has month/year columns, not period_start/period_end
+// We derive dates using MAKE_DATE so the frontend gets period_start/period_end
 exports.getPeriods = async (req, res) => {
   try {
     const result = await db.query(
       `SELECT
          id,
-         MAKE_DATE(year, month, 1)                     AS period_start,
-         (MAKE_DATE(year, month, 1)
-           + INTERVAL '1 month - 1 day')::date         AS period_end,
+         month,
+         year,
+         MAKE_DATE(year, month, 1)                          AS period_start,
+         (MAKE_DATE(year, month, 1) + INTERVAL '1 month - 1 day')::date AS period_end,
          status,
          total_employees,
          total_gross
@@ -71,7 +74,7 @@ exports.getPeriods = async (req, res) => {
   }
 };
 
-// ── GET GL MAPPINGS ───────────────────────────────────────────
+// ── GET GL MAPPINGS ────────────────────────────────────────────────────────
 exports.getMappings = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -113,7 +116,7 @@ exports.getMappings = async (req, res) => {
   }
 };
 
-// ── GENERATE JOURNAL ENTRY ────────────────────────────────────
+// ── GENERATE JOURNAL ENTRY ─────────────────────────────────────────────────
 exports.generateJournal = async (req, res) => {
   const { payroll_period_id, type = "standard", property_id } = req.body;
 
@@ -130,8 +133,13 @@ exports.generateJournal = async (req, res) => {
       });
 
   try {
+    // FIX: Query month/year and derive dates — do NOT select period_start/period_end directly
     const periodCheck = await db.query(
-      "SELECT id, period_start, period_end FROM payroll_periods WHERE id = $1",
+      `SELECT
+         id, month, year,
+         MAKE_DATE(year, month, 1)                          AS period_start,
+         (MAKE_DATE(year, month, 1) + INTERVAL '1 month - 1 day')::date AS period_end
+       FROM payroll_periods WHERE id = $1`,
       [payroll_period_id]
     );
     if (periodCheck.rows.length === 0)
@@ -140,6 +148,7 @@ exports.generateJournal = async (req, res) => {
         .json({ success: false, error: "Payroll period not found" });
 
     const period = periodCheck.rows[0];
+    // period.period_start and period.period_end are now available as derived columns
 
     let payrollQuery = `
       SELECT
@@ -237,6 +246,7 @@ exports.generateJournal = async (req, res) => {
     let totalCredits = totalTax + totalPension + totalUIF + totalNet;
 
     if (type === "hospitality") {
+      // FIX: Use derived period_start/period_end from MAKE_DATE above
       const tipsResult = await db.query(
         `SELECT
           COALESCE(SUM(tips_cash), 0) as total_tips_cash,
@@ -341,13 +351,15 @@ exports.generateJournal = async (req, res) => {
   }
 };
 
-// ── EXPORT JOURNAL ────────────────────────────────────────────
+// ── EXPORT JOURNAL ─────────────────────────────────────────────────────────
 exports.exportJournal = async (req, res) => {
   const { format, payroll_period_id, type = "standard" } = req.query;
   try {
+    // FIX: Derive period_start/period_end via MAKE_DATE instead of selecting directly
     const result = await db.query(
       `SELECT
-        pp.period_start, pp.period_end,
+        MAKE_DATE(pp.year, pp.month, 1)                          AS period_start,
+        (MAKE_DATE(pp.year, pp.month, 1) + INTERVAL '1 month - 1 day')::date AS period_end,
         SUM(pr.gross_salary)     as total_gross,
         SUM(pr.paye_tax)         as total_tax,
         SUM(pr.pension_employee) as total_pension,
@@ -356,7 +368,7 @@ exports.exportJournal = async (req, res) => {
        FROM payroll_records pr
        JOIN payroll_periods pp ON pr.payroll_period_id = pp.id
        WHERE pp.id = $1
-       GROUP BY pp.period_start, pp.period_end`,
+       GROUP BY pp.year, pp.month`,
       [payroll_period_id]
     );
     if (result.rows.length === 0)
@@ -364,7 +376,7 @@ exports.exportJournal = async (req, res) => {
 
     const row = result.rows[0];
     if (format === "csv") {
-      const date = row.period_end.toISOString().split("T")[0];
+      const date = new Date(row.period_end).toISOString().split("T")[0];
       const ref = `PAYROLL-${type}-${payroll_period_id}`;
       let csv = "Date,Reference,Account Code,Account Name,Debit,Credit\n";
       csv += `${date},${ref},${GL_ACCOUNTS.SALARIES_WAGES},Salaries & Wages,${row.total_gross},0\n`;
@@ -387,7 +399,7 @@ exports.exportJournal = async (req, res) => {
   }
 };
 
-// ── GET P&L REPORT ────────────────────────────────────────────
+// ── GET P&L REPORT ─────────────────────────────────────────────────────────
 exports.getPL = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -490,7 +502,7 @@ exports.getPL = async (req, res) => {
   }
 };
 
-// ── GET VAT RETURN ────────────────────────────────────────────
+// ── GET VAT RETURN ─────────────────────────────────────────────────────────
 exports.getVATReturn = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -570,7 +582,7 @@ exports.getVATReturn = async (req, res) => {
   }
 };
 
-// ── GET VAT TRANSACTIONS ──────────────────────────────────────
+// ── GET VAT TRANSACTIONS ───────────────────────────────────────────────────
 exports.getVATTransactions = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -608,7 +620,7 @@ exports.getVATTransactions = async (req, res) => {
   }
 };
 
-// ── CLOSE MONTH-END PERIOD ────────────────────────────────────
+// ── CLOSE MONTH-END PERIOD ─────────────────────────────────────────────────
 exports.closePeriod = async (req, res) => {
   const client = await db.connect();
   try {
@@ -630,38 +642,32 @@ exports.closePeriod = async (req, res) => {
     );
     if (existing.rows.length > 0 && existing.rows[0].status === "closed") {
       await client.query("ROLLBACK");
-      return res.status(409).json({
-        error: `Period ${month}/${year} is already closed`,
-        period_id: existing.rows[0].id,
-      });
+      return res
+        .status(409)
+        .json({
+          error: `Period ${month}/${year} is already closed`,
+          period_id: existing.rows[0].id,
+        });
     }
 
     const outputVat = await client.query(
       `SELECT COALESCE(SUM(vat_amount), 0) as vat FROM vat_transactions
-       WHERE company_id = $1 AND transaction_type = 'output'
-         AND vat_period_month = $2 AND vat_period_year = $3`,
+       WHERE company_id = $1 AND transaction_type = 'output' AND vat_period_month = $2 AND vat_period_year = $3`,
       [companyId, m, y]
     );
     const inputVat = await client.query(
       `SELECT COALESCE(SUM(vat_amount), 0) as vat FROM vat_transactions
-       WHERE company_id = $1 AND transaction_type = 'input'
-         AND vat_period_month = $2 AND vat_period_year = $3`,
+       WHERE company_id = $1 AND transaction_type = 'input' AND vat_period_month = $2 AND vat_period_year = $3`,
       [companyId, m, y]
     );
     const invVat = await client.query(
       `SELECT COALESCE(SUM(vat_amount), 0) as vat FROM invoices
-       WHERE company_id = $1
-         AND EXTRACT(MONTH FROM invoice_date) = $2
-         AND EXTRACT(YEAR  FROM invoice_date) = $3
-         AND status IN ('paid','partial','sent')`,
+       WHERE company_id = $1 AND EXTRACT(MONTH FROM invoice_date) = $2 AND EXTRACT(YEAR FROM invoice_date) = $3 AND status IN ('paid','partial','sent')`,
       [companyId, m, y]
     );
     const apVat = await client.query(
       `SELECT COALESCE(SUM(vat_amount), 0) as vat FROM ap_invoices
-       WHERE company_id = $1
-         AND EXTRACT(MONTH FROM invoice_date) = $2
-         AND EXTRACT(YEAR  FROM invoice_date) = $3
-         AND status != 'cancelled'`,
+       WHERE company_id = $1 AND EXTRACT(MONTH FROM invoice_date) = $2 AND EXTRACT(YEAR FROM invoice_date) = $3 AND status != 'cancelled'`,
       [companyId, m, y]
     );
 
@@ -678,9 +684,7 @@ exports.closePeriod = async (req, res) => {
          COALESCE(SUM(total_vat),     0) as total_vat,
          COALESCE(AVG(occupancy_rate),0) as avg_occupancy
        FROM daily_revenue
-       WHERE company_id = $1
-         AND EXTRACT(MONTH FROM revenue_date) = $2
-         AND EXTRACT(YEAR  FROM revenue_date) = $3`,
+       WHERE company_id = $1 AND EXTRACT(MONTH FROM revenue_date) = $2 AND EXTRACT(YEAR FROM revenue_date) = $3`,
       [companyId, m, y]
     );
 
@@ -691,8 +695,7 @@ exports.closePeriod = async (req, res) => {
          COALESCE(SUM(tax),       0) as paye,
          COALESCE(SUM(uif),       0) as uif
        FROM payroll_records
-       WHERE company_id = $1 AND month = $2 AND year = $3
-         AND status IN ('processed','paid')`,
+       WHERE company_id = $1 AND month = $2 AND year = $3 AND status IN ('processed','paid')`,
       [companyId, m, y]
     );
 
@@ -732,11 +735,8 @@ exports.closePeriod = async (req, res) => {
     );
 
     await client.query(
-      `UPDATE daily_revenue
-       SET status = 'locked', updated_at = NOW()
-       WHERE company_id = $1
-         AND EXTRACT(MONTH FROM revenue_date) = $2
-         AND EXTRACT(YEAR  FROM revenue_date) = $3`,
+      `UPDATE daily_revenue SET status = 'locked', updated_at = NOW()
+       WHERE company_id = $1 AND EXTRACT(MONTH FROM revenue_date) = $2 AND EXTRACT(YEAR FROM revenue_date) = $3`,
       [companyId, m, y]
     );
 
@@ -766,7 +766,6 @@ exports.closePeriod = async (req, res) => {
 
     cache.del(`accounts:${companyId}`);
     cache.del(`mappings:${companyId}`);
-
     await client.query("COMMIT");
 
     return res.json({
@@ -795,7 +794,7 @@ exports.closePeriod = async (req, res) => {
   }
 };
 
-// ── CHECK PERIOD STATUS ───────────────────────────────────────
+// ── CHECK PERIOD STATUS ────────────────────────────────────────────────────
 exports.getPeriodStatus = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
