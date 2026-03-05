@@ -489,3 +489,23 @@ exports.getSalaryHistory = async (req, res) => {
     return res.status(500).json({ error: "get salary history failed" });
   }
 };
+// ── GET DEPARTMENTS ────────────────────────────────────────────────────────
+exports.getDepartments = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const result = await db.query(
+      `SELECT DISTINCT department
+       FROM employees
+       WHERE company_id = $1
+         AND department IS NOT NULL
+         AND department != ''
+         AND (deleted_at IS NULL OR deleted_at > NOW())
+       ORDER BY department ASC`,
+      [companyId]
+    );
+    const departments = result.rows.map(r => r.department);
+    return res.json({ success: true, count: departments.length, data: departments });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
