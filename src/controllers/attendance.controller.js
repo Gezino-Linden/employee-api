@@ -1,5 +1,6 @@
 // File: src/controllers/attendance.controller.js
 const db = require("../db");
+const { logAudit } = require("../utils/auditLog");
 
 // =====================================================
 // HELPERS
@@ -561,6 +562,19 @@ exports.adminOverride = async (req, res) => {
         overrideBy,
       ]
     );
+    await logAudit({
+      req,
+      action: "UPDATE",
+      entityType: "attendance",
+      entityId: req.body.employee_id,
+      entityName: `Attendance override - Employee #${req.body.employee_id} on ${req.body.date}`,
+      changes: {
+        date: { old: null, new: req.body.date },
+        clock_in: { old: null, new: req.body.clock_in },
+        clock_out: { old: null, new: req.body.clock_out },
+        status: { old: null, new: req.body.status },
+      },
+    });
 
     return res.json(result.rows[0]);
   } catch (err) {
