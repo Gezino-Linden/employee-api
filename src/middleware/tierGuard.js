@@ -7,15 +7,22 @@ const db = require("../db");
 
 // Feature → plan mapping
 const FEATURE_PLANS = {
-  reports_basic: ["starter", "professional", "enterprise"],
-  reports_all: ["professional", "enterprise"],
-  shifts: ["professional", "enterprise"],
-  sars: ["professional", "enterprise"],
-  accounting: ["professional", "enterprise"],
-  analytics: ["enterprise"],
-  bulk_import: ["enterprise"],
-  multi_property: ["enterprise"],
-  api_access: ["enterprise"],
+  reports_basic: [
+    "tier1",
+    "tier2",
+    "tier3",
+    "tier4",
+    "tier5",
+    "tier6",
+    "tier7",
+  ],
+  reports_all: ["tier2", "tier3", "tier4", "tier5", "tier6", "tier7"],
+  shifts: ["tier3", "tier4", "tier5", "tier6", "tier7"],
+  sars: ["tier3", "tier4", "tier5", "tier6", "tier7"],
+  accounting: ["tier4", "tier5", "tier6", "tier7"],
+  analytics: ["tier5", "tier6", "tier7"],
+  bulk_import: ["tier7"],
+  api_access: ["tier7"],
 };
 
 /**
