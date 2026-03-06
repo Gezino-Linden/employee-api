@@ -11,6 +11,7 @@ const {
   DATE,
 } = require("../config/constants");
 const db = require("../db");
+const { logAudit } = require("../utils/auditLog");
 
 // ── VALIDATION HELPERS ────────────────────────────────────────
 const VALID_MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -510,6 +511,13 @@ exports.processPayroll = async (req, res) => {
     }
 
     await client.query("COMMIT");
+    await logAudit({
+      req,
+      action: "PROCESS",
+      entityType: "payroll",
+      entityId: req.body.month,
+      entityName: `Payroll ${req.body.month}/${req.body.year}`,
+    });
 
     return res.json({
       message: `Processed ${processed.length} payroll records`,
@@ -649,6 +657,13 @@ exports.markAsPaid = async (req, res) => {
     }
 
     await client.query("COMMIT");
+    await logAudit({
+      req,
+      action: "MARK_PAID",
+      entityType: "payroll",
+      entityId: req.params.id,
+      entityName: `Payroll record #${req.params.id}`,
+    });
     return res.json({
       ...record,
       gl_journal_posted: true,

@@ -1,5 +1,6 @@
 // File: src/controllers/leave.controller.js
 const db = require("../db");
+const { logAudit } = require("../utils/auditLog");
 
 // =====================================================
 // HELPER FUNCTIONS
@@ -37,8 +38,6 @@ exports.getMyBalances = async (req, res) => {
     const companyId = req.user.company_id;
     const year = toInt(req.query.year, new Date().getFullYear());
 
-    // Find any employee in the same company (for now, use the first one)
-    // TODO: Create proper user-to-employee linkage
     const empResult = await db.query(
       `SELECT id FROM employees WHERE company_id = $1 ORDER BY id LIMIT 1`,
       [companyId]
@@ -54,16 +53,9 @@ exports.getMyBalances = async (req, res) => {
 
     const result = await db.query(
       `SELECT 
-        lb.id,
-        lb.employee_id,
-        lt.id as leave_type_id,
-        lt.name as leave_type,
-        lt.is_paid,
-        lb.year,
-        lb.total_days,
-        lb.used_days,
-        lb.pending_days,
-        lb.remaining_days
+        lb.id, lb.employee_id,
+        lt.id as leave_type_id, lt.name as leave_type, lt.is_paid,
+        lb.year, lb.total_days, lb.used_days, lb.pending_days, lb.remaining_days
        FROM leave_balances lb
        JOIN leave_types lt ON lb.leave_type_id = lt.id
        WHERE lb.employee_id = $1 AND lb.year = $2
@@ -87,32 +79,22 @@ exports.getEmployeeBalances = async (req, res) => {
     const year = toInt(req.query.year, new Date().getFullYear());
     const companyId = req.user.company_id;
 
-    if (!employeeId) {
+    if (!employeeId)
       return res.status(400).json({ error: "Invalid employee ID" });
-    }
 
-    // Verify employee belongs to same company
     const empCheck = await db.query(
       `SELECT id FROM employees WHERE id = $1 AND company_id = $2`,
       [employeeId, companyId]
     );
 
-    if (empCheck.rows.length === 0) {
+    if (empCheck.rows.length === 0)
       return res.status(404).json({ error: "Employee not found" });
-    }
 
     const result = await db.query(
       `SELECT 
-        lb.id,
-        lb.employee_id,
-        lt.id as leave_type_id,
-        lt.name as leave_type,
-        lt.is_paid,
-        lb.year,
-        lb.total_days,
-        lb.used_days,
-        lb.pending_days,
-        lb.remaining_days
+        lb.id, lb.employee_id,
+        lt.id as leave_type_id, lt.name as leave_type, lt.is_paid,
+        lb.year, lb.total_days, lb.used_days, lb.pending_days, lb.remaining_days
        FROM leave_balances lb
        JOIN leave_types lt ON lb.leave_type_id = lt.id
        WHERE lb.employee_id = $1 AND lb.year = $2
@@ -135,35 +117,23 @@ exports.getMyRequests = async (req, res) => {
     const companyId = req.user.company_id;
     const status = req.query.status;
 
-    // Get employee_id
     const empResult = await db.query(
       `SELECT id FROM employees WHERE company_id = $1 ORDER BY id LIMIT 1`,
       [companyId]
     );
 
-    if (empResult.rows.length === 0) {
+    if (empResult.rows.length === 0)
       return res.status(404).json({ error: "No employee records found" });
-    }
 
     const employeeId = empResult.rows[0].id;
 
     let query = `
       SELECT 
-        lr.id,
-        lr.employee_id,
-        lr.leave_type_id,
+        lr.id, lr.employee_id, lr.leave_type_id,
         lt.name as leave_type,
-        lr.start_date,
-        lr.end_date,
-        lr.days_requested,
-        lr.reason,
-        lr.status,
-        lr.reviewed_by,
-        u.name as reviewed_by_name,
-        lr.reviewed_at,
-        lr.review_notes,
-        lr.created_at,
-        lr.updated_at
+        lr.start_date, lr.end_date, lr.days_requested, lr.reason, lr.status,
+        lr.reviewed_by, u.name as reviewed_by_name,
+        lr.reviewed_at, lr.review_notes, lr.created_at, lr.updated_at
       FROM leave_requests lr
       JOIN leave_types lt ON lr.leave_type_id = lt.id
       LEFT JOIN users u ON lr.reviewed_by = u.id
@@ -171,12 +141,10 @@ exports.getMyRequests = async (req, res) => {
     `;
 
     const params = [employeeId];
-
     if (status) {
       query += ` AND lr.status = $2`;
       params.push(status);
     }
-
     query += ` ORDER BY lr.created_at DESC`;
 
     const result = await db.query(query, params);
@@ -206,45 +174,30 @@ exports.getAllRequests = async (req, res) => {
       params.push(status);
     }
 
-    // Get total count
-    const countQuery = `SELECT COUNT(*)::int as total FROM leave_requests lr ${whereClause}`;
-    const countResult = await db.query(countQuery, params);
+    const countResult = await db.query(
+      `SELECT COUNT(*)::int as total FROM leave_requests lr ${whereClause}`,
+      params
+    );
     const total = countResult.rows[0]?.total || 0;
 
-    // Get requests
     const dataQuery = `
       SELECT 
-        lr.id,
-        lr.employee_id,
-        e.first_name,
-        e.last_name,
-        e.email,
-        lr.leave_type_id,
-        lt.name as leave_type,
-        lr.start_date,
-        lr.end_date,
-        lr.days_requested,
-        lr.reason,
-        lr.status,
-        lr.reviewed_by,
-        u.name as reviewed_by_name,
-        lr.reviewed_at,
-        lr.review_notes,
-        lr.created_at,
-        lr.updated_at
+        lr.id, lr.employee_id,
+        e.first_name, e.last_name, e.email,
+        lr.leave_type_id, lt.name as leave_type,
+        lr.start_date, lr.end_date, lr.days_requested, lr.reason, lr.status,
+        lr.reviewed_by, u.name as reviewed_by_name,
+        lr.reviewed_at, lr.review_notes, lr.created_at, lr.updated_at
       FROM leave_requests lr
       JOIN employees e ON lr.employee_id = e.id
       JOIN leave_types lt ON lr.leave_type_id = lt.id
       LEFT JOIN users u ON lr.reviewed_by = u.id
       ${whereClause}
-      ORDER BY 
-        CASE WHEN lr.status = 'pending' THEN 0 ELSE 1 END,
-        lr.created_at DESC
+      ORDER BY CASE WHEN lr.status = 'pending' THEN 0 ELSE 1 END, lr.created_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
 
     const result = await db.query(dataQuery, [...params, limit, offset]);
-
     return res.json({
       page,
       limit,
@@ -266,30 +219,17 @@ exports.getRequestById = async (req, res) => {
     const requestId = toInt(req.params.id, 0);
     const companyId = req.user.company_id;
 
-    if (!requestId) {
+    if (!requestId)
       return res.status(400).json({ error: "Invalid request ID" });
-    }
 
     const result = await db.query(
       `SELECT 
-        lr.id,
-        lr.employee_id,
-        e.first_name,
-        e.last_name,
-        e.email,
-        lr.leave_type_id,
-        lt.name as leave_type,
-        lr.start_date,
-        lr.end_date,
-        lr.days_requested,
-        lr.reason,
-        lr.status,
-        lr.reviewed_by,
-        u.name as reviewed_by_name,
-        lr.reviewed_at,
-        lr.review_notes,
-        lr.created_at,
-        lr.updated_at
+        lr.id, lr.employee_id,
+        e.first_name, e.last_name, e.email,
+        lr.leave_type_id, lt.name as leave_type,
+        lr.start_date, lr.end_date, lr.days_requested, lr.reason, lr.status,
+        lr.reviewed_by, u.name as reviewed_by_name,
+        lr.reviewed_at, lr.review_notes, lr.created_at, lr.updated_at
       FROM leave_requests lr
       JOIN employees e ON lr.employee_id = e.id
       JOIN leave_types lt ON lr.leave_type_id = lt.id
@@ -298,10 +238,8 @@ exports.getRequestById = async (req, res) => {
       [requestId, companyId]
     );
 
-    if (result.rows.length === 0) {
+    if (result.rows.length === 0)
       return res.status(404).json({ error: "Leave request not found" });
-    }
-
     return res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -317,69 +255,54 @@ exports.createRequest = async (req, res) => {
     const companyId = req.user.company_id;
     const { leave_type_id, start_date, end_date, reason } = req.body;
 
-    // Get employee_id
     const empResult = await db.query(
       `SELECT id FROM employees WHERE company_id = $1 LIMIT 1`,
       [companyId]
     );
-
-    if (empResult.rows.length === 0) {
+    if (empResult.rows.length === 0)
       return res.status(404).json({ error: "Employee record not found" });
-    }
-
     const employeeId = empResult.rows[0].id;
 
-    // Validation
-    if (!leave_type_id || !start_date || !end_date) {
+    if (!leave_type_id || !start_date || !end_date)
       return res.status(400).json({ error: "Missing required fields" });
-    }
 
     const startDate = new Date(start_date);
     const endDate = new Date(end_date);
 
-    if (startDate > endDate) {
+    if (startDate > endDate)
       return res
         .status(400)
         .json({ error: "End date must be after start date" });
-    }
-
-    if (startDate < new Date()) {
+    if (startDate < new Date())
       return res
         .status(400)
         .json({ error: "Cannot request leave in the past" });
-    }
 
-    // ✅ CHECK SUFFICIENT BALANCE
     const balanceCheck = await db.query(
-      `SELECT remaining_days FROM leave_balances 
-       WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3`,
+      `SELECT remaining_days FROM leave_balances WHERE employee_id = $1 AND leave_type_id = $2 AND year = $3`,
       [employeeId, leave_type_id, startDate.getFullYear()]
     );
-
-    if (balanceCheck.rows.length === 0) {
+    if (balanceCheck.rows.length === 0)
       return res
         .status(400)
         .json({ error: "No leave balance found for this year" });
-    }
 
-    // Calculate approximate days (will be exact after trigger)
     const requestedDays =
       Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
     const availableDays = balanceCheck.rows[0].remaining_days;
-
     if (requestedDays > availableDays) {
-      return res.status(400).json({
-        error: `Insufficient balance. You have ${availableDays} days available but requested ${requestedDays} days.`,
-      });
+      return res
+        .status(400)
+        .json({
+          error: `Insufficient balance. You have ${availableDays} days available but requested ${requestedDays} days.`,
+        });
     }
 
     await db.query("BEGIN");
 
-    // Create request (days_requested will be auto-calculated by trigger)
     const result = await db.query(
       `INSERT INTO leave_requests (employee_id, leave_type_id, company_id, start_date, end_date, reason, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending')
-       RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING *`,
       [
         employeeId,
         leave_type_id,
@@ -392,10 +315,8 @@ exports.createRequest = async (req, res) => {
 
     const newRequest = result.rows[0];
 
-    // Update leave balance - add to pending
     await db.query(
-      `UPDATE leave_balances
-       SET pending_days = pending_days + $1, updated_at = NOW()
+      `UPDATE leave_balances SET pending_days = pending_days + $1, updated_at = NOW()
        WHERE employee_id = $2 AND leave_type_id = $3 AND year = $4`,
       [
         newRequest.days_requested,
@@ -406,7 +327,6 @@ exports.createRequest = async (req, res) => {
     );
 
     await db.query("COMMIT");
-
     return res.status(201).json(newRequest);
   } catch (err) {
     await db.query("ROLLBACK");
@@ -422,38 +342,29 @@ exports.cancelRequest = async (req, res) => {
   try {
     const requestId = toInt(req.params.id, 0);
     const companyId = req.user.company_id;
-
-    if (!requestId) {
+    if (!requestId)
       return res.status(400).json({ error: "Invalid request ID" });
-    }
 
-    // Get employee_id
     const empResult = await db.query(
       `SELECT id FROM employees WHERE company_id = $1 LIMIT 1`,
       [companyId]
     );
-
-    if (empResult.rows.length === 0) {
+    if (empResult.rows.length === 0)
       return res.status(404).json({ error: "Employee record not found" });
-    }
-
     const employeeId = empResult.rows[0].id;
 
     await db.query("BEGIN");
 
-    // Check if request exists and belongs to user
     const checkResult = await db.query(
       `SELECT * FROM leave_requests WHERE id = $1 AND employee_id = $2 AND company_id = $3`,
       [requestId, employeeId, companyId]
     );
-
     if (checkResult.rows.length === 0) {
       await db.query("ROLLBACK");
       return res.status(404).json({ error: "Leave request not found" });
     }
 
     const request = checkResult.rows[0];
-
     if (request.status !== "pending") {
       await db.query("ROLLBACK");
       return res
@@ -461,16 +372,12 @@ exports.cancelRequest = async (req, res) => {
         .json({ error: "Can only cancel pending requests" });
     }
 
-    // Update status
     await db.query(
       `UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
       [requestId]
     );
-
-    // Update balance - remove from pending
     await db.query(
-      `UPDATE leave_balances
-       SET pending_days = pending_days - $1, updated_at = NOW()
+      `UPDATE leave_balances SET pending_days = pending_days - $1, updated_at = NOW()
        WHERE employee_id = $2 AND leave_type_id = $3 AND year = $4`,
       [
         request.days_requested,
@@ -479,16 +386,12 @@ exports.cancelRequest = async (req, res) => {
         new Date(request.start_date).getFullYear(),
       ]
     );
-
-    // Audit log
     await db.query(
-      `INSERT INTO leave_request_audit (leave_request_id, changed_by, old_status, new_status, notes)
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO leave_request_audit (leave_request_id, changed_by, old_status, new_status, notes) VALUES ($1, $2, $3, $4, $5)`,
       [requestId, req.user.id, "pending", "cancelled", "Cancelled by employee"]
     );
 
     await db.query("COMMIT");
-
     return res.json({ message: "Leave request cancelled successfully" });
   } catch (err) {
     await db.query("ROLLBACK");
@@ -505,26 +408,21 @@ exports.approveRequest = async (req, res) => {
     const requestId = toInt(req.params.id, 0);
     const companyId = req.user.company_id;
     const { notes } = req.body;
-
-    if (!requestId) {
+    if (!requestId)
       return res.status(400).json({ error: "Invalid request ID" });
-    }
 
     await db.query("BEGIN");
 
-    // Get request
     const checkResult = await db.query(
       `SELECT * FROM leave_requests WHERE id = $1 AND company_id = $2`,
       [requestId, companyId]
     );
-
     if (checkResult.rows.length === 0) {
       await db.query("ROLLBACK");
       return res.status(404).json({ error: "Leave request not found" });
     }
 
     const request = checkResult.rows[0];
-
     if (request.status !== "pending") {
       await db.query("ROLLBACK");
       return res
@@ -532,18 +430,12 @@ exports.approveRequest = async (req, res) => {
         .json({ error: "Can only approve pending requests" });
     }
 
-    // Update request
     await db.query(
-      `UPDATE leave_requests
-       SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(), review_notes = $2, updated_at = NOW()
-       WHERE id = $3`,
+      `UPDATE leave_requests SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(), review_notes = $2, updated_at = NOW() WHERE id = $3`,
       [req.user.id, notes || null, requestId]
     );
-
-    // Audit log
     await db.query(
-      `INSERT INTO leave_request_audit (leave_request_id, changed_by, old_status, new_status, notes)
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO leave_request_audit (leave_request_id, changed_by, old_status, new_status, notes) VALUES ($1, $2, $3, $4, $5)`,
       [
         requestId,
         req.user.id,
@@ -554,6 +446,14 @@ exports.approveRequest = async (req, res) => {
     );
 
     await db.query("COMMIT");
+
+    await logAudit({
+      req,
+      action: "APPROVE",
+      entityType: "leave",
+      entityId: requestId,
+      entityName: `Leave request #${requestId}`,
+    });
 
     return res.json({ message: "Leave request approved successfully" });
   } catch (err) {
@@ -571,26 +471,21 @@ exports.rejectRequest = async (req, res) => {
     const requestId = toInt(req.params.id, 0);
     const companyId = req.user.company_id;
     const { notes } = req.body;
-
-    if (!requestId) {
+    if (!requestId)
       return res.status(400).json({ error: "Invalid request ID" });
-    }
 
     await db.query("BEGIN");
 
-    // Get request
     const checkResult = await db.query(
       `SELECT * FROM leave_requests WHERE id = $1 AND company_id = $2`,
       [requestId, companyId]
     );
-
     if (checkResult.rows.length === 0) {
       await db.query("ROLLBACK");
       return res.status(404).json({ error: "Leave request not found" });
     }
 
     const request = checkResult.rows[0];
-
     if (request.status !== "pending") {
       await db.query("ROLLBACK");
       return res
@@ -598,18 +493,12 @@ exports.rejectRequest = async (req, res) => {
         .json({ error: "Can only reject pending requests" });
     }
 
-    // Update request
     await db.query(
-      `UPDATE leave_requests
-       SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(), review_notes = $2, updated_at = NOW()
-       WHERE id = $3`,
+      `UPDATE leave_requests SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(), review_notes = $2, updated_at = NOW() WHERE id = $3`,
       [req.user.id, notes || null, requestId]
     );
-
-    // Audit log
     await db.query(
-      `INSERT INTO leave_request_audit (leave_request_id, changed_by, old_status, new_status, notes)
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO leave_request_audit (leave_request_id, changed_by, old_status, new_status, notes) VALUES ($1, $2, $3, $4, $5)`,
       [
         requestId,
         req.user.id,
@@ -620,6 +509,14 @@ exports.rejectRequest = async (req, res) => {
     );
 
     await db.query("COMMIT");
+
+    await logAudit({
+      req,
+      action: "REJECT",
+      entityType: "leave",
+      entityId: requestId,
+      entityName: `Leave request #${requestId}`,
+    });
 
     return res.json({ message: "Leave request rejected successfully" });
   } catch (err) {
@@ -638,29 +535,18 @@ exports.getLeaveCalendar = async (req, res) => {
     const { start_date, end_date } = req.query;
 
     let query = `
-      SELECT 
-        lr.id,
-        lr.employee_id,
-        e.first_name,
-        e.last_name,
-        lt.name as leave_type,
-        lr.start_date,
-        lr.end_date,
-        lr.days_requested,
-        lr.status
+      SELECT lr.id, lr.employee_id, e.first_name, e.last_name,
+             lt.name as leave_type, lr.start_date, lr.end_date, lr.days_requested, lr.status
       FROM leave_requests lr
       JOIN employees e ON lr.employee_id = e.id
       JOIN leave_types lt ON lr.leave_type_id = lt.id
       WHERE lr.company_id = $1 AND lr.status = 'approved'
     `;
-
     const params = [companyId];
-
     if (start_date && end_date) {
       query += ` AND lr.start_date <= $2 AND lr.end_date >= $3`;
       params.push(end_date, start_date);
     }
-
     query += ` ORDER BY lr.start_date`;
 
     const result = await db.query(query, params);
@@ -677,14 +563,9 @@ exports.getLeaveCalendar = async (req, res) => {
 exports.getTeamLeaves = async (req, res) => {
   try {
     const companyId = req.user.company_id;
-
     const result = await db.query(
       `SELECT 
-        e.id as employee_id,
-        e.first_name,
-        e.last_name,
-        e.department,
-        e.position,
+        e.id as employee_id, e.first_name, e.last_name, e.department, e.position,
         COUNT(CASE WHEN lr.status = 'pending' THEN 1 END) as pending_requests,
         COUNT(CASE WHEN lr.status = 'approved' AND lr.start_date <= CURRENT_DATE AND lr.end_date >= CURRENT_DATE THEN 1 END) as currently_on_leave
       FROM employees e
@@ -694,7 +575,6 @@ exports.getTeamLeaves = async (req, res) => {
       ORDER BY e.last_name, e.first_name`,
       [companyId]
     );
-
     return res.json(result.rows);
   } catch (err) {
     console.error(err);

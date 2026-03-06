@@ -44,6 +44,7 @@ const shiftsRoutes = require("./routes/shifts.routes");
 const invoicesRoutes = require("./routes/invoices.routes");
 const apRoutes = require("./routes/ap.routes");
 const revenueRoutes = require("./routes/revenue.routes");
+const auditRoutes = require("./routes/audit.routes");
 
 // ═══════════════════════════════════════════════════════════════
 // STEP 3: EXPRESS APP SETUP
@@ -187,6 +188,7 @@ app.use("/api/shifts", shiftsRoutes);
 app.use("/api/invoices", invoicesRoutes);
 app.use("/api/ap", apRoutes);
 app.use("/api/revenue", revenueRoutes);
+app.use("/api/audit", auditRoutes);
 
 // ═══════════════════════════════════════════════════════════════
 // STEP 9: ERROR HANDLING (MUST BE AFTER ALL ROUTES)
