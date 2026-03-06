@@ -4,44 +4,53 @@ const router = express.Router();
 const c = require("../controllers/accounting.controller");
 const { requireAuth, requireRoles } = require("../middleware");
 
-router.get("/accounts", requireAuth, c.getAccounts);
-router.get("/periods", requireAuth, c.getPeriods);
-router.get("/mappings", requireAuth, c.getMappings);
+const canView = ["owner", "admin", "general_manager", "manager", "accountant"];
+const canManage = [
+  "owner",
+  "admin",
+  "general_manager",
+  "manager",
+  "accountant",
+];
+
+router.get("/accounts", requireAuth, requireRoles(...canView), c.getAccounts);
+router.get("/periods", requireAuth, requireRoles(...canView), c.getPeriods);
+router.get("/mappings", requireAuth, requireRoles(...canView), c.getMappings);
 router.get(
   "/vat/transactions",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   c.getVATTransactions
 );
 router.get(
   "/vat/return",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   c.getVATReturn
 );
-router.get("/pl", requireAuth, requireRoles("admin", "manager"), c.getPL);
+router.get("/pl", requireAuth, requireRoles(...canManage), c.getPL);
 router.post(
   "/journal/generate",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   c.generateJournal
 );
 router.get(
   "/export/csv",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   c.exportJournal
 );
 router.post(
   "/period/close",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   c.closePeriod
 );
 router.get(
   "/period/close",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   c.getPeriodStatus
 );
 

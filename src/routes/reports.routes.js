@@ -1,13 +1,25 @@
 // File: src/routes/reports.routes.js
 const express = require("express");
 const router = express.Router();
-
 const reportsController = require("../controllers/reports.controller");
 const { requireAuth, requireRoles } = require("../middleware");
 
-const auth = [requireAuth, requireRoles("admin", "manager")];
+// All roles that can access reports
+const auth = [
+  requireAuth,
+  requireRoles(
+    "owner",
+    "admin",
+    "general_manager",
+    "manager",
+    "hr_manager",
+    "accountant",
+    "front_office_manager",
+    "supervisor"
+  ),
+];
 
-// ── Legacy endpoints ──────────────────────────────────
+// Legacy
 router.get("/summary", ...auth, reportsController.getSummary);
 router.get("/by-department", ...auth, reportsController.getSalaryByDepartment);
 router.get("/highest-paid", ...auth, reportsController.getHighestPaid);
@@ -34,12 +46,12 @@ router.get(
   reportsController.exportHighestPaidXlsx
 );
 
-// ── Full HR Report ────────────────────────────────────
+// Full HR Report
 router.get("/preview", ...auth, reportsController.getPreview);
 router.get("/export/excel", ...auth, reportsController.exportExcel);
 router.get("/export/pdf", ...auth, reportsController.exportPDF);
 
-// ── Analytics / Labour Costing ───────────────────────
+// Analytics / Labour
 router.get(
   "/department-labour-costing",
   ...auth,
@@ -66,7 +78,7 @@ router.get(
   reportsController.exportDepartmentLabourCostingCSV
 );
 
-// ── EMPLOYEE REPORTS ──────────────────────────────────
+// Employee reports
 router.get(
   "/employees/export/excel",
   ...auth,
@@ -88,7 +100,7 @@ router.get(
   reportsController.exportHeadcountPDF
 );
 
-// ── PAYROLL REPORTS ───────────────────────────────────
+// Payroll reports
 router.get(
   "/payroll/export/excel",
   ...auth,
@@ -120,7 +132,7 @@ router.get(
   reportsController.exportPayrollYTDPDF
 );
 
-// ── ATTENDANCE REPORTS ────────────────────────────────
+// Attendance reports
 router.get(
   "/attendance/export/excel",
   ...auth,
@@ -152,7 +164,7 @@ router.get(
   reportsController.exportOvertimePDF
 );
 
-// ── LEAVE REPORTS ─────────────────────────────────────
+// Leave reports
 router.get(
   "/leave/balances/export/excel",
   ...auth,
@@ -174,7 +186,7 @@ router.get(
   reportsController.exportLeaveTakenPDF
 );
 
-// ── SARS & TAX REPORTS ───────────────────────────────
+// SARS reports
 router.get(
   "/sars/emp201/export/excel",
   ...auth,

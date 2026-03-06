@@ -2,93 +2,72 @@
 const express = require("express");
 const router = express.Router();
 const leaveController = require("../controllers/leave.controller");
-const analyticsController = require("../controllers/analytics.controller"); // ADD THIS LINE
+const analyticsController = require("../controllers/analytics.controller");
 const { requireAuth, requireRoles } = require("../middleware");
 
-/**
- * Leave Management Routes
- * - Employees can: view their own requests, create requests, cancel pending requests
- * - Managers: view team requests, approve/reject
- * - Admins: full access
- */
+// Roles that can manage/approve leave
+const canManage = [
+  "owner",
+  "admin",
+  "general_manager",
+  "manager",
+  "hr_manager",
+  "front_office_manager",
+  "supervisor",
+];
 
-// ===== LEAVE TYPES =====
 router.get("/types", requireAuth, leaveController.getLeaveTypes);
-
-// ===== LEAVE BALANCES =====
 router.get("/balances", requireAuth, leaveController.getMyBalances);
-
 router.get(
   "/balances/:employeeId",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   leaveController.getEmployeeBalances
 );
 
-// ===== LEAVE REQUESTS =====
-
-// Get my leave requests
 router.get("/requests/my", requireAuth, leaveController.getMyRequests);
-
-// Get all requests (admin/manager only)
 router.get(
   "/requests",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   leaveController.getAllRequests
 );
-
-// Get specific request
 router.get("/requests/:id", requireAuth, leaveController.getRequestById);
-
-// Create new leave request
 router.post("/requests", requireAuth, leaveController.createRequest);
-
-// Cancel own request (only pending)
 router.patch(
   "/requests/:id/cancel",
   requireAuth,
   leaveController.cancelRequest
 );
-
-// Approve request (admin/manager only)
 router.patch(
   "/requests/:id/approve",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   leaveController.approveRequest
 );
-
-// Reject request (admin/manager only)
 router.patch(
   "/requests/:id/reject",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   leaveController.rejectRequest
 );
-
-// Get leave calendar (all approved leaves)
 router.get(
   "/calendar",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   leaveController.getLeaveCalendar
 );
-
-// Get team leaves (manager view)
 router.get(
   "/team",
   requireAuth,
-  requireRoles("admin", "manager"),
+  requireRoles(...canManage),
   leaveController.getTeamLeaves
 );
-
-// ===== ANALYTICS =====
 router.get(
   "/analytics",
   requireAuth,
-  requireRoles("admin", "manager"),
-  analyticsController.getLeaveAnalytics // USE THE IMPORTED CONTROLLER
+  requireRoles("owner", "admin", "general_manager", "manager", "hr_manager"),
+  analyticsController.getLeaveAnalytics
 );
 
 module.exports = router;
