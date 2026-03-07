@@ -1,8 +1,11 @@
+﻿const db = require('../db');
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 // File: src/controllers/employee-portal.controller.js
 const db = require("../db");
 const asyncHandler = require("../utils/asyncHandler");
 
-// ── ATTENDANCE ────────────────────────────────────────────────────────────────
+// â”€â”€ ATTENDANCE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 exports.getTodayStatus = asyncHandler(async (req, res) => {
   const result = await db.query(
@@ -90,7 +93,7 @@ exports.endBreak = asyncHandler(async (req, res) => {
   return res.json({ message: "Break ended" });
 });
 
-// ── LEAVE ─────────────────────────────────────────────────────────────────────
+// â”€â”€ LEAVE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 exports.getLeaveBalances = asyncHandler(async (req, res) => {
   const result = await db.query(
@@ -172,7 +175,7 @@ exports.cancelLeaveRequest = asyncHandler(async (req, res) => {
   return res.json({ message: "Leave request cancelled" });
 });
 
-// ── SHIFTS ────────────────────────────────────────────────────────────────────
+// â”€â”€ SHIFTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 exports.getMyShifts = asyncHandler(async (req, res) => {
   const result = await db.query(
@@ -186,7 +189,7 @@ exports.getMyShifts = asyncHandler(async (req, res) => {
   return res.json({ data: result.rows });
 });
 
-// ── PAYSLIPS ──────────────────────────────────────────────────────────────────
+// â”€â”€ PAYSLIPS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 exports.getMyPayslips = asyncHandler(async (req, res) => {
   const result = await db.query(
@@ -198,3 +201,5 @@ exports.getMyPayslips = asyncHandler(async (req, res) => {
   );
   return res.json({ data: result.rows });
 });
+
+

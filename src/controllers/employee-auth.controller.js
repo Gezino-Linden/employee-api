@@ -1,3 +1,4 @@
+﻿const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 // File: src/controllers/employee-auth.controller.js
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -11,7 +12,7 @@ function sha256(input) {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
 
-// ── EMPLOYEE LOGIN ────────────────────────────────────────────────────────────
+// â”€â”€ EMPLOYEE LOGIN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.login = async (req, res) => {
   const { email, password } = req.body;
   if (!email || !email.includes("@"))
@@ -81,7 +82,7 @@ exports.login = async (req, res) => {
   }
 };
 
-// ── GET ME ────────────────────────────────────────────────────────────────────
+// â”€â”€ GET ME â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getMe = async (req, res) => {
   try {
     const result = await db.query(
@@ -105,7 +106,7 @@ exports.getMe = async (req, res) => {
   }
 };
 
-// ── SET / RESET PORTAL PASSWORD (called by HR manager) ───────────────────────
+// â”€â”€ SET / RESET PORTAL PASSWORD (called by HR manager) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.setPortalPassword = async (req, res) => {
   const { employeeId, password } = req.body;
   if (!employeeId || !password)
@@ -135,7 +136,7 @@ exports.setPortalPassword = async (req, res) => {
   }
 };
 
-// ── EMPLOYEE CHANGE OWN PASSWORD ──────────────────────────────────────────────
+// â”€â”€ EMPLOYEE CHANGE OWN PASSWORD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.changePassword = async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword)
@@ -171,7 +172,7 @@ exports.changePassword = async (req, res) => {
   }
 };
 
-// ── TOGGLE PORTAL ACCESS ──────────────────────────────────────────────────────
+// â”€â”€ TOGGLE PORTAL ACCESS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.togglePortalAccess = async (req, res) => {
   const { employeeId, enabled } = req.body;
   try {
@@ -186,3 +187,4 @@ exports.togglePortalAccess = async (req, res) => {
     return res.status(500).json({ error: "Failed to update portal access" });
   }
 };
+
