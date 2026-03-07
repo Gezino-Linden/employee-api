@@ -1,19 +1,19 @@
-// File: src/routes/employee-auth.routes.js
+﻿// File: src/routes/employee-auth.routes.js
 const express = require("express");
 const router = express.Router();
 const c = require("../controllers/employee-auth.controller");
-const { requireAuth, requireRoles } = require("../middleware");
+const { requireAuth, requireRoles } = require("../middleware.js");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { requireEmployee } = require("../middleware/employeeAuth");
 
-// ── Public ────────────────────────────────────────────────────────────────────
+// â”€â”€ Public â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.post("/login", authLimiter, c.login);
 
-// ── Employee self-service ─────────────────────────────────────────────────────
+// â”€â”€ Employee self-service â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get("/me", requireEmployee, c.getMe);
 router.post("/change-password", requireEmployee, c.changePassword);
 
-// ── HR management of portal access ───────────────────────────────────────────
+// â”€â”€ HR management of portal access â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const canManage = [
   "owner",
   "admin",
@@ -37,3 +37,4 @@ router.post(
 module.exports = router;
 
 // redeploy
+
