@@ -1,13 +1,27 @@
-// src/controllers/auth.controller.js — Full version with license key validation
+// src/controllers/auth.controller.js — Full version with license key + password reset
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../db");
 const crypto = require("crypto");
+const nodemailer = require("nodemailer");
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 const JWT_EXPIRY = process.env.JWT_EXPIRY || "8h";
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || "https://gentle-kulfi-c11ec3.netlify.app";
 
-// ── Validators ─────────────────────────────────────────────────────────────
+// ── Email transporter ─────────────────────────────────────────────────────────
+function getTransporter() {
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_APP_PASSWORD, // Gmail App Password (not your real password)
+    },
+  });
+}
+
+// ── Validators ────────────────────────────────────────────────────────────────
 function validatePassword(password) {
   const errors = [];
   if (!password || password.length < 8) errors.push("at least 8 characters");
@@ -31,11 +45,10 @@ function slugifyCompany(name) {
     .slice(0, 80);
 }
 
-// ── REGISTER (with license key) ────────────────────────────────────────────
+// ── REGISTER ──────────────────────────────────────────────────────────────────
 exports.register = async (req, res) => {
   const { name, email, password, companyName, licenseKey } = req.body;
 
-  // Basic validation
   if (!name || name.trim().length < 2)
     return res
       .status(400)
@@ -56,7 +69,6 @@ exports.register = async (req, res) => {
       .json({ error: `Password must contain: ${pwErrors.join(", ")}` });
 
   try {
-    // ── Validate license key ──────────────────────────────────────────────
     const keyRes = await db.query(
       `SELECT lk.id, lk.key, lk.used_at, lk.expires_at, lk.is_active,
               p.id AS plan_id, p.name AS plan_name, p.display_name,
@@ -73,19 +85,16 @@ exports.register = async (req, res) => {
         .json({ error: "Invalid license key. Please check and try again." });
 
     const lic = keyRes.rows[0];
-
     if (!lic.is_active)
       return res
         .status(400)
         .json({
           error: "This license key has been deactivated. Contact MaeRoll.",
         });
-
     if (lic.used_at)
       return res
         .status(400)
         .json({ error: "This license key has already been used." });
-
     if (lic.expires_at && new Date(lic.expires_at) < new Date())
       return res
         .status(400)
@@ -93,7 +102,6 @@ exports.register = async (req, res) => {
           error: "This license key has expired. Contact MaeRoll for a new one.",
         });
 
-    // ── Check email not already registered ────────────────────────────────
     const exists = await db.query("SELECT id FROM users WHERE email = $1", [
       email.trim().toLowerCase(),
     ]);
@@ -107,13 +115,10 @@ exports.register = async (req, res) => {
 
     await db.query("BEGIN");
 
-    // Create company with plan info
     let companyRes = await db
       .query(
-        `INSERT INTO companies
-         (name, slug, plan_id, plan_name, max_employees, max_users, pepm_rate, license_key, subscription_status, trial_ends_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', NOW() + INTERVAL '365 days')
-       RETURNING id, name, slug`,
+        `INSERT INTO companies (name, slug, plan_id, plan_name, max_employees, max_users, pepm_rate, license_key, subscription_status, trial_ends_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active', NOW() + INTERVAL '365 days') RETURNING id, name, slug`,
         [
           companyName.trim(),
           slug,
@@ -128,10 +133,8 @@ exports.register = async (req, res) => {
       .catch(async () => {
         const fallback = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
         return db.query(
-          `INSERT INTO companies
-           (name, slug, plan_id, plan_name, max_employees, max_users, pepm_rate, license_key, subscription_status, trial_ends_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', NOW() + INTERVAL '365 days')
-         RETURNING id, name, slug`,
+          `INSERT INTO companies (name, slug, plan_id, plan_name, max_employees, max_users, pepm_rate, license_key, subscription_status, trial_ends_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active', NOW() + INTERVAL '365 days') RETURNING id, name, slug`,
           [
             companyName.trim(),
             fallback,
@@ -146,21 +149,14 @@ exports.register = async (req, res) => {
       });
 
     const company = companyRes.rows[0];
-
-    // Create admin user
     const userRes = await db.query(
-      `INSERT INTO users (name, email, password, role, company_id)
-       VALUES ($1, $2, $3, 'admin', $4)
-       RETURNING id, name, email, role, company_id`,
+      `INSERT INTO users (name, email, password, role, company_id) VALUES ($1,$2,$3,'admin',$4) RETURNING id, name, email, role, company_id`,
       [name.trim(), email.trim().toLowerCase(), hashed, company.id]
     );
-
-    // Mark license key as used
     await db.query(
       `UPDATE license_keys SET used_at = NOW(), used_by_company = $1 WHERE id = $2`,
       [company.id, lic.id]
     );
-
     await db.query("COMMIT");
 
     return res.status(201).json({
@@ -177,11 +173,9 @@ exports.register = async (req, res) => {
   }
 };
 
-// ── LOGIN ──────────────────────────────────────────────────────────────────
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
 exports.login = async (req, res) => {
-  const ip = req.ip || req.connection?.remoteAddress || "unknown";
   const { email, password } = req.body;
-
   if (!email || !email.includes("@"))
     return res.status(400).json({ error: "Valid email required" });
   if (!password) return res.status(400).json({ error: "Password required" });
@@ -190,8 +184,7 @@ exports.login = async (req, res) => {
     const result = await db.query(
       `SELECT u.id, u.name, u.email, u.password, u.role, u.company_id,
               c.plan_name, c.max_employees, c.subscription_status, c.trial_ends_at
-       FROM users u
-       LEFT JOIN companies c ON c.id = u.company_id
+       FROM users u LEFT JOIN companies c ON c.id = u.company_id
        WHERE u.email = $1`,
       [email.trim().toLowerCase()]
     );
@@ -202,9 +195,8 @@ exports.login = async (req, res) => {
       ? await bcrypt.compare(password, user.password)
       : await bcrypt.compare(password, dummyHash).then(() => false);
 
-    if (!user || !valid) {
+    if (!user || !valid)
       return res.status(401).json({ error: "Invalid email or password" });
-    }
 
     const token = jwt.sign(
       {
@@ -236,7 +228,150 @@ exports.login = async (req, res) => {
   }
 };
 
-// ── ACCEPT INVITE ──────────────────────────────────────────────────────────
+// ── FORGOT PASSWORD ───────────────────────────────────────────────────────────
+exports.forgotPassword = async (req, res) => {
+  const { email } = req.body;
+  if (!email || !email.includes("@"))
+    return res.status(400).json({ error: "Valid email required" });
+
+  try {
+    const result = await db.query(
+      `SELECT id, name, email FROM users WHERE email = $1`,
+      [email.trim().toLowerCase()]
+    );
+
+    // Always return success to prevent email enumeration
+    if (!result.rows.length)
+      return res.json({
+        message: "If that email exists, a reset link has been sent.",
+      });
+
+    const user = result.rows[0];
+
+    // Expire any existing tokens for this user
+    await db.query(
+      `UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL`,
+      [user.id]
+    );
+
+    // Generate a secure random token
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = sha256(rawToken);
+
+    await db.query(
+      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+       VALUES ($1, $2, NOW() + INTERVAL '1 hour')`,
+      [user.id, tokenHash]
+    );
+
+    const resetUrl = `${FRONTEND_URL}/reset-password?token=${rawToken}`;
+
+    // Send email if Gmail is configured
+    if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+      try {
+        const transporter = getTransporter();
+        await transporter.sendMail({
+          from: `"MaeRoll HR" <${process.env.GMAIL_USER}>`,
+          to: user.email,
+          subject: "Reset your MaeRoll password",
+          html: `
+            <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+              <h2 style="color: #6366f1;">Reset Your Password</h2>
+              <p>Hi ${user.name},</p>
+              <p>We received a request to reset your MaeRoll password. Click the button below to set a new password:</p>
+              <a href="${resetUrl}" style="display:inline-block;margin:1.5rem 0;padding:0.75rem 1.5rem;background:#6366f1;color:white;text-decoration:none;border-radius:8px;font-weight:600;">Reset Password</a>
+              <p style="color:#64748b;font-size:0.85rem;">This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+            </div>
+          `,
+        });
+      } catch (emailErr) {
+        console.error("Email send failed:", emailErr.message);
+        // Don't fail the request if email fails — log it
+      }
+    } else {
+      // No email configured — log token for manual sending (dev/early prod)
+      console.log(`[PASSWORD RESET] Token for ${user.email}: ${rawToken}`);
+      console.log(`[PASSWORD RESET] Reset URL: ${resetUrl}`);
+    }
+
+    return res.json({
+      message: "If that email exists, a reset link has been sent.",
+    });
+  } catch (err) {
+    console.error("Forgot password error:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to process request. Please try again." });
+  }
+};
+
+// ── RESET PASSWORD ────────────────────────────────────────────────────────────
+exports.resetPassword = async (req, res) => {
+  const { token, password } = req.body;
+
+  if (!token || token.length < 20)
+    return res.status(400).json({ error: "Valid reset token required" });
+
+  const pwErrors = validatePassword(password);
+  if (pwErrors.length > 0)
+    return res
+      .status(400)
+      .json({ error: `Password must contain: ${pwErrors.join(", ")}` });
+
+  const tokenHash = sha256(token);
+
+  try {
+    const result = await db.query(
+      `SELECT prt.id, prt.user_id, prt.expires_at, prt.used_at, u.email, u.name
+       FROM password_reset_tokens prt
+       JOIN users u ON u.id = prt.user_id
+       WHERE prt.token_hash = $1`,
+      [tokenHash]
+    );
+
+    if (!result.rows.length)
+      return res.status(400).json({ error: "Invalid or expired reset link." });
+
+    const row = result.rows[0];
+
+    if (row.used_at)
+      return res
+        .status(400)
+        .json({ error: "This reset link has already been used." });
+
+    if (new Date(row.expires_at) < new Date())
+      return res
+        .status(400)
+        .json({
+          error: "This reset link has expired. Please request a new one.",
+        });
+
+    const hashed = await bcrypt.hash(password, 12);
+
+    await db.query("BEGIN");
+    await db.query(`UPDATE users SET password = $1 WHERE id = $2`, [
+      hashed,
+      row.user_id,
+    ]);
+    await db.query(
+      `UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`,
+      [row.id]
+    );
+    await db.query("COMMIT");
+
+    return res.json({
+      message: "Password reset successfully. You can now log in.",
+    });
+  } catch (err) {
+    await db.query("ROLLBACK");
+    console.error("Reset password error:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to reset password. Please try again." });
+  }
+};
+
+// ── ACCEPT INVITE ─────────────────────────────────────────────────────────────
 exports.acceptInvite = async (req, res) => {
   const { token, name, password } = req.body;
 
@@ -276,11 +411,8 @@ exports.acceptInvite = async (req, res) => {
       return res.status(400).json({ error: "Invite expired" });
     }
 
-    // Check user limit for this company
     const limitRes = await db.query(
-      `SELECT c.max_users, COUNT(u.id) AS current_users
-       FROM companies c LEFT JOIN users u ON u.company_id = c.id
-       WHERE c.id = $1 GROUP BY c.max_users`,
+      `SELECT c.max_users, COUNT(u.id) AS current_users FROM companies c LEFT JOIN users u ON u.company_id = c.id WHERE c.id = $1 GROUP BY c.max_users`,
       [invite.company_id]
     );
     const lim = limitRes.rows[0];
@@ -317,7 +449,7 @@ exports.acceptInvite = async (req, res) => {
   }
 };
 
-// ── LICENSE KEY VALIDATOR (for frontend pre-check) ────────────────────────
+// ── LICENSE KEY VALIDATOR ─────────────────────────────────────────────────────
 exports.validateKey = async (req, res) => {
   const { key } = req.body;
   if (!key) return res.status(400).json({ error: "Key required" });
@@ -353,5 +485,4 @@ exports.validateKey = async (req, res) => {
   }
 };
 
-// ── EXPORT VALIDATORS ──────────────────────────────────────────────────────
 exports.validatePassword = validatePassword;
