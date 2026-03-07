@@ -190,7 +190,7 @@ exports.getMyShifts = asyncHandler(async (req, res) => {
 
 exports.getMyPayslips = asyncHandler(async (req, res) => {
   const result = await db.query(
-    `SELECT id, month, year, gross_salary, net_salary, status, created_at
+    `SELECT id, month, year, gross_pay, net_pay, status, created_at
      FROM payroll_records
      WHERE employee_id = $1
      ORDER BY year DESC, month DESC LIMIT 24`,
@@ -198,6 +198,7 @@ exports.getMyPayslips = asyncHandler(async (req, res) => {
   );
   return res.json({ data: result.rows });
 });
+
 
 
 
