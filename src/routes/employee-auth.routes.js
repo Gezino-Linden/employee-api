@@ -11,4 +11,6 @@ router.post("/change-password", requireEmployee, c.changePassword);
 router.post("/set-password", requireAuth, c.setPortalPassword);
 router.post("/toggle-access", requireAuth, c.togglePortalAccess);
 
+router.get("/ping", (req, res) => res.json({ ok: true, version: "v2" }));
 module.exports = router;
+
