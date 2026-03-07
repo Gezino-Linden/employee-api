@@ -45,6 +45,8 @@ const invoicesRoutes = require("./routes/invoices.routes");
 const apRoutes = require("./routes/ap.routes");
 const revenueRoutes = require("./routes/revenue.routes");
 const auditRoutes = require("./routes/audit.routes");
+const employeeAuthRoutes = require("./routes/employee-auth.routes");
+const employeePortalRoutes = require("./routes/employee-portal.routes");
 
 // ═══════════════════════════════════════════════════════════════
 // STEP 3: EXPRESS APP SETUP
@@ -115,7 +117,6 @@ app.get("/health", async (req, res) => {
       },
       database: {
         status: dbHealth.healthy ? "connected" : "disconnected",
-
         responseTime: dbHealth.responseTime,
         connections: {
           total: dbHealth.totalConnections,
@@ -189,6 +190,8 @@ app.use("/api/invoices", invoicesRoutes);
 app.use("/api/ap", apRoutes);
 app.use("/api/revenue", revenueRoutes);
 app.use("/api/audit", auditRoutes);
+app.use("/api/employee-auth", employeeAuthRoutes);
+app.use("/api/employee-portal", employeePortalRoutes);
 
 // ═══════════════════════════════════════════════════════════════
 // STEP 9: ERROR HANDLING (MUST BE AFTER ALL ROUTES)
