@@ -1,5 +1,4 @@
-﻿const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-// File: src/controllers/employee-auth.controller.js
+﻿// File: src/controllers/employee-auth.controller.js
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../db");
@@ -187,4 +186,5 @@ exports.togglePortalAccess = async (req, res) => {
     return res.status(500).json({ error: "Failed to update portal access" });
   }
 };
+
 

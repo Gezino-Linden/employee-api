@@ -1,7 +1,4 @@
-﻿const db = require('../db');
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-// File: src/controllers/employee-portal.controller.js
+﻿// File: src/controllers/employee-portal.controller.js
 const db = require("../db");
 const asyncHandler = require("../utils/asyncHandler");
 
@@ -201,5 +198,6 @@ exports.getMyPayslips = asyncHandler(async (req, res) => {
   );
   return res.json({ data: result.rows });
 });
+
 
 
