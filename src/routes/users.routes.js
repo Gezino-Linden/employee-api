@@ -1,33 +1,45 @@
+// File: src/routes/users.routes.js
 const express = require("express");
 const router = express.Router();
-
 const usersController = require("../controllers/users.controller");
 const { requireAuth, requireRoles } = require("../middleware");
 
-/**
- * Users permissions:
- * - admin: can update roles + delete users
- * - authenticated: can list/view/create/update (your choice)
- */
+const canManage = ["owner", "admin", "general_manager", "manager"];
 
-// Basic CRUD
-router.get("/", requireAuth, usersController.getUsers);
-router.get("/:id", requireAuth, usersController.getUserById);
-router.post("/", requireAuth, usersController.createUser);
-router.put("/:id", requireAuth, usersController.updateUser);
-
-// Admin-only actions
+router.get(
+  "/",
+  requireAuth,
+  requireRoles(...canManage),
+  usersController.getUsers
+);
+router.get(
+  "/:id",
+  requireAuth,
+  requireRoles(...canManage),
+  usersController.getUserById
+);
+router.post(
+  "/",
+  requireAuth,
+  requireRoles(...canManage),
+  usersController.createUser
+);
+router.put(
+  "/:id",
+  requireAuth,
+  requireRoles(...canManage),
+  usersController.updateUser
+);
 router.delete(
   "/:id",
   requireAuth,
-  requireRoles("admin"),
+  requireRoles("owner", "admin"),
   usersController.deleteUser
 );
-
 router.patch(
   "/:id/role",
   requireAuth,
-  requireRoles("admin"),
+  requireRoles("owner", "admin"),
   usersController.updateUserRole
 );
 
