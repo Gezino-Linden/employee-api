@@ -11,6 +11,13 @@ router.get(
   requireRoles("admin", "manager"),
   c.getARSummary
 );
+router.get(
+  "/ageing",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  c.getARAgeing
+);
+
 router.get("/", requireAuth, requireRoles("admin", "manager"), c.getInvoices);
 router.get("/:id", requireAuth, requireRoles("admin", "manager"), c.getInvoice);
 
@@ -50,10 +57,5 @@ router.post(
   validate(invoiceValidators.payment),
   c.recordPayment
 );
-router.get(
-  "/ageing",
-  requireAuth,
-  requireRoles("admin", "manager"),
-  c.getARAgeing
-);
+
 module.exports = router;
