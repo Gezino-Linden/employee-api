@@ -43,7 +43,7 @@ exports.getMyLicense = async (req, res) => {
 
     // Employee usage
     const empResult = await db.query(
-      `SELECT COUNT(*) FROM employees WHERE company_id = $1 AND employment_status = 'active'`,
+      `SELECT COUNT(*) FROM employees WHERE company_id = $1`,
       [companyId]
     );
     const activeEmployees = parseInt(empResult.rows[0].count);
