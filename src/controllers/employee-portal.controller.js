@@ -43,7 +43,7 @@ exports.clockOut = asyncHandler(async (req, res) => {
   await db.query(
     `UPDATE attendance_records
      SET clock_out = NOW(),
-         hours_worked = ROUND(EXTRACT(EPOCH FROM (NOW() - clock_in))/3600, 2)
+         total_hours = ROUND(EXTRACT(EPOCH FROM (NOW() - clock_in))/3600, 2)
      WHERE id = $1`,
     [rec.rows[0].id]
   );
@@ -208,6 +208,7 @@ exports.downloadPayslip = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Payslip not found" });
   return res.json({ data: result.rows[0] });
 });
+
 
 
 
