@@ -3,6 +3,7 @@ const router = express.Router();
 const c = require("../controllers/ap.controller");
 const { requireAuth, requireRoles } = require("../middleware");
 const { validate, apValidators } = require("../middleware/validate");
+const { requireFeature } = require("../middleware/license");
 
 router.get(
   "/summary",
@@ -12,6 +13,7 @@ router.get(
 );
 router.get("/suppliers", requireAuth, c.getSuppliers);
 router.get("/bills", requireAuth, requireRoles("admin", "manager"), c.getBills);
+router.get("/ageing", requireAuth, requireFeature("ap_ageing"), c.getAPAgeing);
 
 router.post(
   "/suppliers",

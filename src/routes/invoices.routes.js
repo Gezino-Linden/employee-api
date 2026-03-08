@@ -3,6 +3,7 @@ const router = express.Router();
 const c = require("../controllers/invoices.controller");
 const { requireAuth, requireRoles } = require("../middleware");
 const { validate, invoiceValidators } = require("../middleware/validate");
+const { requireFeature } = require("../middleware/license");
 
 router.get("/categories", requireAuth, c.getCategories);
 router.get(
@@ -20,6 +21,7 @@ router.get(
 
 router.get("/", requireAuth, requireRoles("admin", "manager"), c.getInvoices);
 router.get("/:id", requireAuth, requireRoles("admin", "manager"), c.getInvoice);
+router.get("/ageing", requireAuth, requireFeature("ar_ageing"), c.getARAgeing);
 
 router.post(
   "/",

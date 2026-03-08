@@ -47,6 +47,7 @@ const revenueRoutes = require("./routes/revenue.routes");
 const auditRoutes = require("./routes/audit.routes");
 const employeeAuthRoutes = require("./routes/employee-auth.routes");
 const employeePortalRoutes = require("./routes/employee-portal.routes");
+const licenseRoutes = require("./routes/license.routes");
 
 // ═══════════════════════════════════════════════════════════════
 // STEP 3: EXPRESS APP SETUP
@@ -192,6 +193,7 @@ app.use("/api/revenue", revenueRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/employee-auth", employeeAuthRoutes);
 app.use("/api/employee-portal", employeePortalRoutes);
+app.use("/api/license", licenseRoutes);
 
 // ═══════════════════════════════════════════════════════════════
 // STEP 9: ERROR HANDLING (MUST BE AFTER ALL ROUTES)
