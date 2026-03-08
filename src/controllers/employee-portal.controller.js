@@ -61,7 +61,7 @@ exports.startBreak = asyncHandler(async (req, res) => {
 
   await db.query(
     `UPDATE attendance_records
-     SET status = 'on_break', break_start = NOW()
+     SET break_start = NOW()
      WHERE id = $1`,
     [rec.rows[0].id]
   );
@@ -72,7 +72,7 @@ exports.endBreak = asyncHandler(async (req, res) => {
   const rec = await db.query(
     `SELECT id, break_start FROM attendance_records
      WHERE employee_id = $1 AND DATE(clock_in) = CURRENT_DATE
-       AND clock_out IS NULL AND status = 'on_break'`,
+       AND clock_out IS NULL AND break_start IS NOT NULL`,
     [req.employee.id]
   );
   if (!rec.rows.length)
@@ -208,4 +208,5 @@ exports.downloadPayslip = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Payslip not found" });
   return res.json({ data: result.rows[0] });
 });
+
 
