@@ -208,3 +208,4 @@ exports.downloadPayslip = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Payslip not found" });
   return res.json({ data: result.rows[0] });
 });
+
