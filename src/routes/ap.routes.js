@@ -43,5 +43,11 @@ router.patch(
   validate(apValidators.payBill),
   c.payBill
 );
+router.get(
+  "/ageing",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  c.getAPAgeing
+);
 
 module.exports = router;

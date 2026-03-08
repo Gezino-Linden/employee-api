@@ -455,3 +455,62 @@ exports.getAPSummary = async (req, res) => {
       .json({ error: "Failed to fetch AP summary", details: err.message });
   }
 };
+// ── AP AGEING REPORT ───────────────────────────────────────────
+exports.getAPAgeing = async (req, res) => {
+  try {
+    const companyId = req.user?.company_id;
+
+    const result = await db.query(
+      `SELECT
+         s.name                                                          AS supplier_name,
+         COUNT(i.id)::int                                                AS invoice_count,
+         COALESCE(SUM(CASE WHEN i.due_date >= CURRENT_DATE
+                          THEN i.balance_due ELSE 0 END), 0)            AS current_due,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE
+                            AND i.due_date >= CURRENT_DATE - 30
+                          THEN i.balance_due ELSE 0 END), 0)            AS days_1_30,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 30
+                            AND i.due_date >= CURRENT_DATE - 60
+                          THEN i.balance_due ELSE 0 END), 0)            AS days_31_60,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 60
+                            AND i.due_date >= CURRENT_DATE - 90
+                          THEN i.balance_due ELSE 0 END), 0)            AS days_61_90,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 90
+                          THEN i.balance_due ELSE 0 END), 0)            AS days_90_plus,
+         COALESCE(SUM(i.balance_due), 0)                                AS total_outstanding
+       FROM ap_invoices i
+       JOIN ap_suppliers s ON s.id = i.supplier_id
+       WHERE i.company_id = $1
+         AND i.status != 'paid'
+         AND i.balance_due > 0
+       GROUP BY s.name
+       ORDER BY total_outstanding DESC`,
+      [companyId]
+    );
+
+    // Totals row
+    const totals = result.rows.reduce(
+      (acc, r) => {
+        acc.invoice_count  += r.invoice_count;
+        acc.current_due    += toNum(r.current_due);
+        acc.days_1_30      += toNum(r.days_1_30);
+        acc.days_31_60     += toNum(r.days_31_60);
+        acc.days_61_90     += toNum(r.days_61_90);
+        acc.days_90_plus   += toNum(r.days_90_plus);
+        acc.total_outstanding += toNum(r.total_outstanding);
+        return acc;
+      },
+      { invoice_count: 0, current_due: 0, days_1_30: 0, days_31_60: 0,
+        days_61_90: 0, days_90_plus: 0, total_outstanding: 0 }
+    );
+
+    return res.json({
+      as_of: new Date().toISOString().split("T")[0],
+      suppliers: result.rows,
+      totals,
+    });
+  } catch (err) {
+    console.error("ERROR in getAPAgeing:", err);
+    return res.status(500).json({ error: "Failed to generate AP ageing report", details: err.message });
+  }
+};
