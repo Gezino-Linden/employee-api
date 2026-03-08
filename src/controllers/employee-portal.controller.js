@@ -106,7 +106,7 @@ exports.getLeaveBalances = asyncHandler(async (req, res) => {
 exports.getLeaveTypes = asyncHandler(async (req, res) => {
   const result = await db.query(
     `SELECT id, name, default_days_per_year FROM leave_types
-     WHERE company_id = $1 ORDER BY name`,
+     WHERE is_active = true ORDER BY name`,
     [req.employee.company_id]
   );
   return res.json({ data: result.rows });
@@ -198,6 +198,7 @@ exports.getMyPayslips = asyncHandler(async (req, res) => {
   );
   return res.json({ data: result.rows });
 });
+
 
 
 
