@@ -206,3 +206,14 @@ exports.getMyPayslips = asyncHandler(async (req, res) => {
 
 
 
+
+exports.downloadPayslip = asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const result = await db.query(
+    `SELECT * FROM payroll_records WHERE id = \ AND employee_id = \`,
+    [id, req.employee.id]
+  );
+  if (!result.rows.length)
+    return res.status(404).json({ error: "Payslip not found" });
+  return res.json({ data: result.rows[0] });
+});
