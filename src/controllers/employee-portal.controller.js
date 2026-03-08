@@ -81,9 +81,9 @@ exports.endBreak = asyncHandler(async (req, res) => {
   await db.query(
     `UPDATE attendance_records
      SET status = 'present',
-         break_minutes = COALESCE(break_minutes, 0) +
+         total_break_minutes = COALESCE(total_break_minutes, 0) +
            ROUND(EXTRACT(EPOCH FROM (NOW() - break_start)) / 60),
-         break_start = NULL
+         break_start = NULL, break_end = NOW()
      WHERE id = $1`,
     [rec.rows[0].id]
   );
@@ -208,5 +208,6 @@ exports.downloadPayslip = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Payslip not found" });
   return res.json({ data: result.rows[0] });
 });
+
 
 
