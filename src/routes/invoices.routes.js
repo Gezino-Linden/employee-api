@@ -50,5 +50,10 @@ router.post(
   validate(invoiceValidators.payment),
   c.recordPayment
 );
-
+router.get(
+  "/ageing",
+  requireAuth,
+  requireRoles("admin", "manager"),
+  c.getARAgeing
+);
 module.exports = router;
