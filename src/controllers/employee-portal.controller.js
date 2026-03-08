@@ -198,19 +198,10 @@ exports.getMyPayslips = asyncHandler(async (req, res) => {
   );
   return res.json({ data: result.rows });
 });
-
-
-
-
-
-
-
-
-
 exports.downloadPayslip = asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const result = await db.query(
-    `SELECT * FROM payroll_records WHERE id = \ AND employee_id = \`,
+    "SELECT * FROM payroll_records WHERE id = $1 AND employee_id = $2",
     [id, req.employee.id]
   );
   if (!result.rows.length)
