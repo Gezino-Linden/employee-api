@@ -621,28 +621,121 @@ exports.getARAgeing = async (req, res) => {
       [companyId]
     );
 
-    const totals = result.rows.reduce(
+    // Opening balances for customers
+    const obResult = await db.query(
+      `SELECT entity_name, SUM(amount) AS opening_balance
+       FROM opening_balances
+       WHERE company_id = $1 AND entity_type = 'customer'
+       GROUP BY entity_name`,
+      [companyId]
+    );
+    const obMap = {};
+    obResult.rows.forEach((r) => {
+      obMap[r.entity_name] = toNum(r.opening_balance);
+    });
+
+    const customers = result.rows.map((r) => {
+      const ob = obMap[r.customer_name] || 0;
+      const current = toNum(r.current_due);
+      const d1_30 = toNum(r.days_1_30);
+      const d31_60 = toNum(r.days_31_60);
+      const d61_90 = toNum(r.days_61_90);
+      const d90plus = toNum(r.days_90_plus);
+      const invoiceTotal = current + d1_30 + d31_60 + d61_90 + d90plus;
+
+      const running_90plus = d90plus + ob;
+      const running_61_90 = running_90plus + d61_90;
+      const running_31_60 = running_61_90 + d31_60;
+      const running_1_30 = running_31_60 + d1_30;
+      const running_current = running_1_30 + current;
+
+      return {
+        customer_name: r.customer_name,
+        invoice_count: r.invoice_count,
+        opening_balance: ob,
+        current_due: current,
+        days_1_30: d1_30,
+        days_31_60: d31_60,
+        days_61_90: d61_90,
+        days_90_plus: d90plus,
+        total_outstanding: invoiceTotal + ob,
+        running_90plus,
+        running_61_90,
+        running_31_60,
+        running_1_30,
+        running_current,
+      };
+    });
+
+    for (const [name, ob] of Object.entries(obMap)) {
+      if (!customers.find((c) => c.customer_name === name)) {
+        customers.push({
+          customer_name: name,
+          invoice_count: 0,
+          opening_balance: ob,
+          current_due: 0,
+          days_1_30: 0,
+          days_31_60: 0,
+          days_61_90: 0,
+          days_90_plus: 0,
+          total_outstanding: ob,
+          running_90plus: ob,
+          running_61_90: ob,
+          running_31_60: ob,
+          running_1_30: ob,
+          running_current: ob,
+        });
+      }
+    }
+
+    customers.sort((a, b) => b.total_outstanding - a.total_outstanding);
+
+    const totals = customers.reduce(
       (acc, r) => {
-        acc.invoice_count     += r.invoice_count;
-        acc.current_due       += toNum(r.current_due);
-        acc.days_1_30         += toNum(r.days_1_30);
-        acc.days_31_60        += toNum(r.days_31_60);
-        acc.days_61_90        += toNum(r.days_61_90);
-        acc.days_90_plus      += toNum(r.days_90_plus);
-        acc.total_outstanding += toNum(r.total_outstanding);
+        acc.invoice_count += r.invoice_count;
+        acc.opening_balance += r.opening_balance;
+        acc.current_due += r.current_due;
+        acc.days_1_30 += r.days_1_30;
+        acc.days_31_60 += r.days_31_60;
+        acc.days_61_90 += r.days_61_90;
+        acc.days_90_plus += r.days_90_plus;
+        acc.total_outstanding += r.total_outstanding;
+        acc.running_90plus += r.running_90plus;
+        acc.running_61_90 += r.running_61_90;
+        acc.running_31_60 += r.running_31_60;
+        acc.running_1_30 += r.running_1_30;
+        acc.running_current += r.running_current;
         return acc;
       },
-      { invoice_count: 0, current_due: 0, days_1_30: 0, days_31_60: 0,
-        days_61_90: 0, days_90_plus: 0, total_outstanding: 0 }
+      {
+        invoice_count: 0,
+        opening_balance: 0,
+        current_due: 0,
+        days_1_30: 0,
+        days_31_60: 0,
+        days_61_90: 0,
+        days_90_plus: 0,
+        total_outstanding: 0,
+        running_90plus: 0,
+        running_61_90: 0,
+        running_31_60: 0,
+        running_1_30: 0,
+        running_current: 0,
+      }
     );
 
     return res.json({
       as_of: new Date().toISOString().split("T")[0],
-      customers: result.rows,
+      customers,
       totals,
     });
   } catch (err) {
     console.error("ERROR in getARAgeing:", err);
-    return res.status(500).json({ error: "Failed to generate AR ageing report", details: err.message });
+    return res
+      .status(500)
+      .json({
+        error: "Failed to generate AR ageing report",
+        details: err.message,
+      });
   }
 };
