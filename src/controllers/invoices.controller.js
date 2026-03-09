@@ -594,24 +594,52 @@ exports.getARAgeing = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
 
+    // ── 1. Invoice buckets (12 x 30-day buckets based on due_date) ──────────
     const result = await db.query(
       `SELECT
-         COALESCE(i.guest_name, i.company_name, 'Unknown')             AS customer_name,
-         COUNT(i.id)::int                                               AS invoice_count,
+         COALESCE(i.guest_name, i.company_name, 'Unknown')              AS customer_name,
+         COUNT(i.id)::int                                                AS invoice_count,
          COALESCE(SUM(CASE WHEN i.due_date >= CURRENT_DATE
-                           THEN i.balance_due ELSE 0 END), 0)          AS current_due,
+                           THEN i.balance_due ELSE 0 END), 0)           AS current_due,
          COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE
                             AND i.due_date >= CURRENT_DATE - 30
-                           THEN i.balance_due ELSE 0 END), 0)          AS days_1_30,
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_1_30,
          COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 30
                             AND i.due_date >= CURRENT_DATE - 60
-                           THEN i.balance_due ELSE 0 END), 0)          AS days_31_60,
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_31_60,
          COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 60
                             AND i.due_date >= CURRENT_DATE - 90
-                           THEN i.balance_due ELSE 0 END), 0)          AS days_61_90,
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_61_90,
          COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 90
-                           THEN i.balance_due ELSE 0 END), 0)          AS days_90_plus,
-         COALESCE(SUM(i.balance_due), 0)                               AS total_outstanding
+                            AND i.due_date >= CURRENT_DATE - 120
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_90_120,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 120
+                            AND i.due_date >= CURRENT_DATE - 150
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_120_150,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 150
+                            AND i.due_date >= CURRENT_DATE - 180
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_150_180,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 180
+                            AND i.due_date >= CURRENT_DATE - 210
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_180_210,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 210
+                            AND i.due_date >= CURRENT_DATE - 240
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_210_240,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 240
+                            AND i.due_date >= CURRENT_DATE - 270
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_240_270,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 270
+                            AND i.due_date >= CURRENT_DATE - 300
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_270_300,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 300
+                            AND i.due_date >= CURRENT_DATE - 330
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_300_330,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 330
+                            AND i.due_date >= CURRENT_DATE - 360
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_330_360,
+         COALESCE(SUM(CASE WHEN i.due_date <  CURRENT_DATE - 360
+                           THEN i.balance_due ELSE 0 END), 0)           AS days_360_plus,
+         COALESCE(SUM(i.balance_due), 0)                                AS total_outstanding
        FROM invoices i
        WHERE i.company_id = $1
          AND i.status NOT IN ('paid', 'cancelled')
@@ -621,7 +649,7 @@ exports.getARAgeing = async (req, res) => {
       [companyId]
     );
 
-    // Opening balances for customers
+    // ── 2. Opening balances ──────────────────────────────────────────────────
     const obResult = await db.query(
       `SELECT entity_name, SUM(amount) AS opening_balance
        FROM opening_balances
@@ -634,20 +662,61 @@ exports.getARAgeing = async (req, res) => {
       obMap[r.entity_name] = toNum(r.opening_balance);
     });
 
+    // ── 3. Build rows with running balances ──────────────────────────────────
+    // Running balance cumulates from OLDEST bucket → NEWEST, starting with opening_balance
+    // So balance_360plus = ob + days_360_plus
+    //    balance_330_360 = balance_360plus + days_330_360
+    //    ...
+    //    balance_current = balance_1_30 + current_due
+    // This mirrors the procedure logic exactly.
     const customers = result.rows.map((r) => {
       const ob = obMap[r.customer_name] || 0;
       const current = toNum(r.current_due);
       const d1_30 = toNum(r.days_1_30);
       const d31_60 = toNum(r.days_31_60);
       const d61_90 = toNum(r.days_61_90);
-      const d90plus = toNum(r.days_90_plus);
-      const invoiceTotal = current + d1_30 + d31_60 + d61_90 + d90plus;
+      const d90_120 = toNum(r.days_90_120);
+      const d120_150 = toNum(r.days_120_150);
+      const d150_180 = toNum(r.days_150_180);
+      const d180_210 = toNum(r.days_180_210);
+      const d210_240 = toNum(r.days_210_240);
+      const d240_270 = toNum(r.days_240_270);
+      const d270_300 = toNum(r.days_270_300);
+      const d300_330 = toNum(r.days_300_330);
+      const d330_360 = toNum(r.days_330_360);
+      const d360_plus = toNum(r.days_360_plus);
 
-      const running_90plus = d90plus + ob;
-      const running_61_90 = running_90plus + d61_90;
-      const running_31_60 = running_61_90 + d31_60;
-      const running_1_30 = running_31_60 + d1_30;
-      const running_current = running_1_30 + current;
+      const invoiceTotal =
+        current +
+        d1_30 +
+        d31_60 +
+        d61_90 +
+        d90_120 +
+        d120_150 +
+        d150_180 +
+        d180_210 +
+        d210_240 +
+        d240_270 +
+        d270_300 +
+        d300_330 +
+        d330_360 +
+        d360_plus;
+
+      // Running balances — oldest first, cumulating forward
+      const bal_360plus = ob + d360_plus;
+      const bal_330_360 = bal_360plus + d330_360;
+      const bal_300_330 = bal_330_360 + d300_330;
+      const bal_270_300 = bal_300_330 + d270_300;
+      const bal_240_270 = bal_270_300 + d240_270;
+      const bal_210_240 = bal_240_270 + d210_240;
+      const bal_180_210 = bal_210_240 + d180_210;
+      const bal_150_180 = bal_180_210 + d150_180;
+      const bal_120_150 = bal_150_180 + d120_150;
+      const bal_90_120 = bal_120_150 + d90_120;
+      const bal_61_90 = bal_90_120 + d61_90;
+      const bal_31_60 = bal_61_90 + d31_60;
+      const bal_1_30 = bal_31_60 + d1_30;
+      const bal_current = bal_1_30 + current;
 
       return {
         customer_name: r.customer_name,
@@ -657,71 +726,121 @@ exports.getARAgeing = async (req, res) => {
         days_1_30: d1_30,
         days_31_60: d31_60,
         days_61_90: d61_90,
-        days_90_plus: d90plus,
+        days_90_120: d90_120,
+        days_120_150: d120_150,
+        days_150_180: d150_180,
+        days_180_210: d180_210,
+        days_210_240: d210_240,
+        days_240_270: d240_270,
+        days_270_300: d270_300,
+        days_300_330: d300_330,
+        days_330_360: d330_360,
+        days_360_plus: d360_plus,
         total_outstanding: invoiceTotal + ob,
-        running_90plus,
-        running_61_90,
-        running_31_60,
-        running_1_30,
-        running_current,
+        // Running balances (each = opening_bal + all buckets from 360+ up to this one)
+        balance_360plus: bal_360plus,
+        balance_330_360: bal_330_360,
+        balance_300_330: bal_300_330,
+        balance_270_300: bal_270_300,
+        balance_240_270: bal_240_270,
+        balance_210_240: bal_210_240,
+        balance_180_210: bal_180_210,
+        balance_150_180: bal_150_180,
+        balance_120_150: bal_120_150,
+        balance_90_120: bal_90_120,
+        balance_61_90: bal_61_90,
+        balance_31_60: bal_31_60,
+        balance_1_30: bal_1_30,
+        balance_current: bal_current,
       };
     });
 
+    // Add opening-balance-only customers (no invoices this period)
     for (const [name, ob] of Object.entries(obMap)) {
       if (!customers.find((c) => c.customer_name === name)) {
-        customers.push({
-          customer_name: name,
-          invoice_count: 0,
+        const zero = {
           opening_balance: ob,
           current_due: 0,
           days_1_30: 0,
           days_31_60: 0,
           days_61_90: 0,
-          days_90_plus: 0,
+          days_90_120: 0,
+          days_120_150: 0,
+          days_150_180: 0,
+          days_180_210: 0,
+          days_210_240: 0,
+          days_240_270: 0,
+          days_270_300: 0,
+          days_300_330: 0,
+          days_330_360: 0,
+          days_360_plus: 0,
+        };
+        customers.push({
+          customer_name: name,
+          invoice_count: 0,
+          ...zero,
           total_outstanding: ob,
-          running_90plus: ob,
-          running_61_90: ob,
-          running_31_60: ob,
-          running_1_30: ob,
-          running_current: ob,
+          balance_360plus: ob,
+          balance_330_360: ob,
+          balance_300_330: ob,
+          balance_270_300: ob,
+          balance_240_270: ob,
+          balance_210_240: ob,
+          balance_180_210: ob,
+          balance_150_180: ob,
+          balance_120_150: ob,
+          balance_90_120: ob,
+          balance_61_90: ob,
+          balance_31_60: ob,
+          balance_1_30: ob,
+          balance_current: ob,
         });
       }
     }
 
     customers.sort((a, b) => b.total_outstanding - a.total_outstanding);
 
+    // ── 4. Totals row ────────────────────────────────────────────────────────
+    const zero = {
+      invoice_count: 0,
+      opening_balance: 0,
+      current_due: 0,
+      days_1_30: 0,
+      days_31_60: 0,
+      days_61_90: 0,
+      days_90_120: 0,
+      days_120_150: 0,
+      days_150_180: 0,
+      days_180_210: 0,
+      days_210_240: 0,
+      days_240_270: 0,
+      days_270_300: 0,
+      days_300_330: 0,
+      days_330_360: 0,
+      days_360_plus: 0,
+      total_outstanding: 0,
+      balance_360plus: 0,
+      balance_330_360: 0,
+      balance_300_330: 0,
+      balance_270_300: 0,
+      balance_240_270: 0,
+      balance_210_240: 0,
+      balance_180_210: 0,
+      balance_150_180: 0,
+      balance_120_150: 0,
+      balance_90_120: 0,
+      balance_61_90: 0,
+      balance_31_60: 0,
+      balance_1_30: 0,
+      balance_current: 0,
+    };
+
     const totals = customers.reduce(
       (acc, r) => {
-        acc.invoice_count += r.invoice_count;
-        acc.opening_balance += r.opening_balance;
-        acc.current_due += r.current_due;
-        acc.days_1_30 += r.days_1_30;
-        acc.days_31_60 += r.days_31_60;
-        acc.days_61_90 += r.days_61_90;
-        acc.days_90_plus += r.days_90_plus;
-        acc.total_outstanding += r.total_outstanding;
-        acc.running_90plus += r.running_90plus;
-        acc.running_61_90 += r.running_61_90;
-        acc.running_31_60 += r.running_31_60;
-        acc.running_1_30 += r.running_1_30;
-        acc.running_current += r.running_current;
+        for (const key of Object.keys(acc)) acc[key] += r[key] || 0;
         return acc;
       },
-      {
-        invoice_count: 0,
-        opening_balance: 0,
-        current_due: 0,
-        days_1_30: 0,
-        days_31_60: 0,
-        days_61_90: 0,
-        days_90_plus: 0,
-        total_outstanding: 0,
-        running_90plus: 0,
-        running_61_90: 0,
-        running_31_60: 0,
-        running_1_30: 0,
-        running_current: 0,
-      }
+      { ...zero }
     );
 
     return res.json({
@@ -739,3 +858,5 @@ exports.getARAgeing = async (req, res) => {
       });
   }
 };
+
+
