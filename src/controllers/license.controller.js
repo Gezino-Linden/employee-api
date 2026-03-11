@@ -1,4 +1,4 @@
-// src/controllers/license.controller.js
+﻿// src/controllers/license.controller.js
 const db = require("../db");
 const {
   TIER_TO_PLAN,
@@ -32,13 +32,13 @@ exports.getMyLicense = async (req, res) => {
     const planTier =
       row.plan_tier || TIER_TO_PLAN[row.plan_name] || "operations";
     const planRank = PLAN_RANK[planTier] || 1;
-    const features = Array.isArray(row.features) ? row.features : [];
+    const features = (row.features && typeof row.features === "object") ? row.features : {};
 
     // Build boolean feature map for frontend
     const featureMap = {};
     for (const [feat, minPlan] of Object.entries(FEATURE_MIN_PLAN)) {
       featureMap[feat] =
-        features.includes(feat) || (PLAN_RANK[minPlan] || 1) <= planRank;
+        (features[feat] === true) || (PLAN_RANK[minPlan] || 1) <= planRank;
     }
 
     // Employee usage
@@ -73,7 +73,7 @@ exports.getMyLicense = async (req, res) => {
 
 // POST /api/license/activate
 // Body: { license_key }
-// Hotel admin enters key they received — links it to their company
+// Hotel admin enters key they received â€” links it to their company
 exports.activateLicense = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -143,7 +143,7 @@ exports.activateLicense = async (req, res) => {
       plan_tier: planTier,
       display_name: lk.display_name,
       expires_at: lk.expires_at,
-      message: `✅ License activated — ${lk.display_name} plan unlocked!`,
+      message: `âœ… License activated â€” ${lk.display_name} plan unlocked!`,
     });
   } catch (err) {
     console.error("activateLicense error:", err);
@@ -153,7 +153,7 @@ exports.activateLicense = async (req, res) => {
   }
 };
 
-// GET /api/license/plans  (public — for pricing page)
+// GET /api/license/plans  (public â€” for pricing page)
 exports.getPlans = async (req, res) => {
   try {
     const result = await db.query(
@@ -165,3 +165,4 @@ exports.getPlans = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch plans" });
   }
 };
+

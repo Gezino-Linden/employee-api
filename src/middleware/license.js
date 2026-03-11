@@ -1,9 +1,9 @@
-// src/middleware/license.js
+﻿// src/middleware/license.js
 // Reads from your existing: plans, license_keys, companies tables
 
 const db = require("../db");
 
-// ── TIER → PLAN MAPPING ───────────────────────────────────────
+// â”€â”€ TIER â†’ PLAN MAPPING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const TIER_TO_PLAN = {
   tier1: "operations",
   tier2: "operations",
@@ -21,7 +21,7 @@ const PLAN_RANK = {
   enterprise: 4,
 };
 
-// ── FEATURE → MINIMUM PLAN ────────────────────────────────────
+// â”€â”€ FEATURE â†’ MINIMUM PLAN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const FEATURE_MIN_PLAN = {
   // Operations (all plans)
   payroll: "operations",
@@ -59,8 +59,8 @@ const FEATURE_MIN_PLAN = {
   onboarding_team: "enterprise",
 };
 
-// ── ATTACH PLAN TO REQUEST ────────────────────────────────────
-// Joins companies → plans → license_keys to get full picture
+// â”€â”€ ATTACH PLAN TO REQUEST â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Joins companies â†’ plans â†’ license_keys to get full picture
 async function attachPlan(req, res, next) {
   try {
     const companyId = req.user?.company_id;
@@ -111,7 +111,7 @@ async function attachPlan(req, res, next) {
     // Resolve plan tier (use plan_tier column, fall back to deriving from plan_name)
     const planTier =
       row.plan_tier || TIER_TO_PLAN[row.plan_name] || "operations";
-    const features = Array.isArray(row.features) ? row.features : [];
+    const features = (row.features && typeof row.features === "object") ? row.features : {};
 
     req.company = {
       id: row.id,
@@ -134,7 +134,7 @@ async function attachPlan(req, res, next) {
   }
 }
 
-// ── REQUIRE MINIMUM PLAN ──────────────────────────────────────
+// â”€â”€ REQUIRE MINIMUM PLAN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function requirePlan(minimumPlan) {
   return async (req, res, next) => {
     await attachPlan(req, res, () => {
@@ -154,11 +154,11 @@ function requirePlan(minimumPlan) {
   };
 }
 
-// ── REQUIRE SPECIFIC FEATURE ──────────────────────────────────
+// â”€â”€ REQUIRE SPECIFIC FEATURE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function requireFeature(feature) {
   return async (req, res, next) => {
     await attachPlan(req, res, () => {
-      const hasFeature = req.company?.features?.includes(feature);
+      const hasFeature = req.company?.features?.[feature] === true;
       if (!hasFeature) {
         const minPlan = FEATURE_MIN_PLAN[feature] || "intelligence";
         return res.status(403).json({
@@ -182,3 +182,4 @@ module.exports = {
   PLAN_RANK,
   FEATURE_MIN_PLAN,
 };
+
