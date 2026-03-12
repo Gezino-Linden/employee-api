@@ -1,4 +1,4 @@
-// File: src/controllers/payroll.controller.js
+﻿// File: src/controllers/payroll.controller.js
 const PDFDocument = require("pdfkit");
 const {
   VAT,
@@ -13,7 +13,7 @@ const {
 const db = require("../db");
 const { logAudit } = require("../utils/auditLog");
 
-// ── VALIDATION HELPERS ────────────────────────────────────────
+// â”€â”€ VALIDATION HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const VALID_MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
 const VALID_PAYMENT_METHODS = PAYMENT_METHODS;
 const VALID_STATUSES = PAYROLL_STATUSES;
@@ -40,7 +40,7 @@ function validateStatus(status) {
   return VALID_STATUSES.includes(status);
 }
 
-// ── SA PAYE TAX CALCULATION (2024/2025) ───────────────────────
+// â”€â”€ SA PAYE TAX CALCULATION (2024/2025) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function calculateTax(grossPay, age = 30) {
   const annualGross = grossPay * 12;
   let annualTax;
@@ -74,7 +74,7 @@ function calculateTax(grossPay, age = 30) {
   return Math.max(0, annualTax / 12);
 }
 
-// ── GET PAYROLL SUMMARY ───────────────────────────────────────
+// â”€â”€ GET PAYROLL SUMMARY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getPayrollSummary = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -113,7 +113,7 @@ exports.getPayrollSummary = async (req, res) => {
   }
 };
 
-// ── GET PAYROLL RECORDS ───────────────────────────────────────
+// â”€â”€ GET PAYROLL RECORDS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getPayrollRecords = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -177,7 +177,7 @@ exports.getPayrollRecords = async (req, res) => {
   }
 };
 
-// ── INITIALIZE PAYROLL PERIOD ─────────────────────────────────
+// â”€â”€ INITIALIZE PAYROLL PERIOD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.initializePayrollPeriod = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -215,7 +215,7 @@ exports.initializePayrollPeriod = async (req, res) => {
   }
 };
 
-// ── UPDATE PAYROLL RECORD ─────────────────────────────────────
+// â”€â”€ UPDATE PAYROLL RECORD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.updatePayrollRecord = async (req, res) => {
   let client;
   try {
@@ -239,7 +239,7 @@ exports.updatePayrollRecord = async (req, res) => {
     await client.query("BEGIN");
 
     const checkResult = await client.query(
-      `SELECT pr.*, e.salary AS basic_salary, e.custom_tax_rate
+      `SELECT pr.*, e.salary AS basic_salary
        FROM payroll_records pr
        JOIN employees e ON pr.employee_id = e.id
        WHERE pr.id = $1 AND pr.company_id = $2
@@ -354,8 +354,8 @@ exports.updatePayrollRecord = async (req, res) => {
   }
 };
 
-// ── PROCESS PAYROLL ───────────────────────────────────────────
-// ── PROCESS PAYROLL ───────────────────────────────────────────
+// â”€â”€ PROCESS PAYROLL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ PROCESS PAYROLL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Replace the existing processPayroll function with this one.
 // Everything else in payroll.controller.js stays the same.
 exports.processPayroll = async (req, res) => {
@@ -387,9 +387,9 @@ exports.processPayroll = async (req, res) => {
     client = await db.connect();
     await client.query("BEGIN");
 
-    // ── Fetch current draft payroll records for these employees ──
+    // â”€â”€ Fetch current draft payroll records for these employees â”€â”€
     const drafts = await client.query(
-      `SELECT pr.*, e.age, e.custom_tax_rate, e.hourly_rate, e.salary
+      `SELECT pr.*, e.age, e.hourly_rate, e.salary
        FROM payroll_records pr
        JOIN employees e ON pr.employee_id = e.id
        WHERE pr.company_id = $1
@@ -408,7 +408,7 @@ exports.processPayroll = async (req, res) => {
     const processed = [];
 
     for (const record of drafts.rows) {
-      // ── 1. Pull shift earnings for this employee/month ──────────
+      // â”€â”€ 1. Pull shift earnings for this employee/month â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const shiftEarnings = await calculateMonthlyShiftPay(
         companyId,
         record.employee_id,
@@ -416,7 +416,7 @@ exports.processPayroll = async (req, res) => {
         yearInt
       );
 
-      // ── 2. Pull attendance overtime for this employee/month ──────
+      // â”€â”€ 2. Pull attendance overtime for this employee/month â”€â”€â”€â”€â”€â”€
       // Sum overtime_pay from attendance_records for the period
       const attendanceResult = await client.query(
         `SELECT
@@ -431,10 +431,10 @@ exports.processPayroll = async (req, res) => {
       );
       const attendance = attendanceResult.rows[0];
 
-      // ── 3. Decide how to apply earnings ─────────────────────────
-      // If employee has shift assignments this month → use shift pay as overtime
-      // If employee has attendance overtime but no shifts → use attendance overtime
-      // If neither → keep whatever was manually entered on the draft record
+      // â”€â”€ 3. Decide how to apply earnings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // If employee has shift assignments this month â†’ use shift pay as overtime
+      // If employee has attendance overtime but no shifts â†’ use attendance overtime
+      // If neither â†’ keep whatever was manually entered on the draft record
       let newOvertime = toNum(record.overtime);
 
       if (shiftEarnings.shift_count > 0) {
@@ -446,7 +446,7 @@ exports.processPayroll = async (req, res) => {
         newOvertime = toNum(attendance.total_overtime_pay);
       }
 
-      // ── 4. Recalculate gross → tax → net ────────────────────────
+      // â”€â”€ 4. Recalculate gross â†’ tax â†’ net â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const basicSalary  = toNum(record.basic_salary);
       const allowances   = toNum(record.allowances);
       const bonuses      = toNum(record.bonuses);
@@ -464,7 +464,7 @@ exports.processPayroll = async (req, res) => {
       const newTotalDeductions = newTax + uif + pension + medicalAid + otherDeduct;
       const newNet = newGross - newTotalDeductions;
 
-      // ── 5. Update the payroll record ─────────────────────────────
+      // â”€â”€ 5. Update the payroll record â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const updated = await client.query(
         `UPDATE payroll_records
          SET status           = 'processed',
@@ -488,7 +488,7 @@ exports.processPayroll = async (req, res) => {
         ]
       );
 
-      // ── 6. Audit log ─────────────────────────────────────────────
+      // â”€â”€ 6. Audit log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       await client.query(
         `INSERT INTO payroll_audit_log
            (payroll_record_id, changed_by, action, old_status, new_status,
@@ -503,7 +503,7 @@ exports.processPayroll = async (req, res) => {
             ? `Shift earnings applied: ${shiftEarnings.shift_count} shifts, night pay R${shiftEarnings.night_pay}, premium R${shiftEarnings.shift_premium}`
             : toNum(attendance.total_overtime_pay) > 0
             ? `Attendance overtime applied: ${attendance.total_overtime_hours}h = R${attendance.total_overtime_pay}`
-            : 'No shift/overtime data — processed from base salary',
+            : 'No shift/overtime data â€” processed from base salary',
         ]
       );
 
@@ -532,9 +532,9 @@ exports.processPayroll = async (req, res) => {
   }
 };
 
-// ── MARK AS PAID ──────────────────────────────────────────────
+// â”€â”€ MARK AS PAID â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Payroll cost goes to GL expense account (6100 Salaries & Wages)
-// NOT to ap_invoices — payroll is a direct expense, not a supplier invoice
+// NOT to ap_invoices â€” payroll is a direct expense, not a supplier invoice
 exports.markAsPaid = async (req, res) => {
   let client;
   try {
@@ -602,7 +602,7 @@ exports.markAsPaid = async (req, res) => {
     // 3. Auto-post GL journal lines
     //    Debit: 6100 Salaries & Wages (expense account)
     //    Credit: 2100 PAYE, 2110 Pension, 2130 UIF, 2150 Net Salaries Payable
-    //    This is the correct accounting treatment — payroll is an expense, not a purchase
+    //    This is the correct accounting treatment â€” payroll is an expense, not a purchase
     try {
       await client.query(
         `INSERT INTO gl_journal_lines
@@ -680,7 +680,7 @@ exports.markAsPaid = async (req, res) => {
   }
 };
 
-// ── GENERATE PAYSLIP (PDF) ────────────────────────────────────
+// â”€â”€ GENERATE PAYSLIP (PDF) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.generatePayslip = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -838,7 +838,7 @@ exports.generatePayslip = async (req, res) => {
   }
 };
 
-// ── GET PAYROLL HISTORY ───────────────────────────────────────
+// â”€â”€ GET PAYROLL HISTORY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getPayrollHistory = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -902,7 +902,7 @@ exports.getPayrollHistory = async (req, res) => {
   }
 };
 
-// ── SHIFT PAY CALCULATION HELPERS ─────────────────────────────
+// â”€â”€ SHIFT PAY CALCULATION HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function calculateNightHours(clockIn, clockOut) {
   const NIGHT_START = 18;
   const NIGHT_END = 6;
@@ -1067,7 +1067,7 @@ async function calculateMonthlyShiftPay(companyId, employeeId, month, year) {
   }
 }
 
-// ── GET SHIFT EARNINGS ────────────────────────────────────────
+// â”€â”€ GET SHIFT EARNINGS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getShiftEarnings = async (req, res) => {
   try {
     const companyId = req.user?.company_id;
@@ -1102,3 +1102,4 @@ exports.calculateShiftPay = calculateShiftPay;
 exports.calculateNightHours = calculateNightHours;
 exports.checkPublicHoliday = checkPublicHoliday;
 exports.calculateMonthlyShiftPay = calculateMonthlyShiftPay;
+
