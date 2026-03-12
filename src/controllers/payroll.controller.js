@@ -301,9 +301,9 @@ exports.updatePayrollRecord = async (req, res) => {
        SET allowances = $1, bonuses = $2, overtime = $3,
            medical_aid = $4, other_deductions = $5,
            notes = COALESCE($6, notes),
-           gross_pay = $7, tax = $8, total_deductions = $9, net_pay = $10,
+           tax = $7, total_deductions = $8, net_pay = $9,
            updated_at = NOW()
-       WHERE id = $11 RETURNING *`,
+       WHERE id = $10 RETURNING *`,
       [
         newAllowances,
         newBonuses,
@@ -311,7 +311,6 @@ exports.updatePayrollRecord = async (req, res) => {
         newMedicalAid,
         newOtherDeductions,
         notes,
-        newGross,
         newTax,
         newTotalDeductions,
         newNet,
@@ -469,17 +468,15 @@ exports.processPayroll = async (req, res) => {
         `UPDATE payroll_records
          SET status           = 'processed',
              overtime         = $1,
-             gross_pay        = $2,
-             tax              = $3,
-             total_deductions = $4,
-             net_pay          = $5,
+             tax              = $2,
+             total_deductions = $3,
+             net_pay          = $4,
              updated_at       = NOW()
-         WHERE id         = $6
-           AND company_id = $7
+         WHERE id         = $5
+           AND company_id = $6
          RETURNING id, employee_id`,
         [
           newOvertime,
-          newGross,
           newTax,
           newTotalDeductions,
           newNet,
@@ -1102,6 +1099,8 @@ exports.calculateShiftPay = calculateShiftPay;
 exports.calculateNightHours = calculateNightHours;
 exports.checkPublicHoliday = checkPublicHoliday;
 exports.calculateMonthlyShiftPay = calculateMonthlyShiftPay;
+
+
 
 
 
