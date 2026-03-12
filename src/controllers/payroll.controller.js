@@ -389,7 +389,7 @@ exports.processPayroll = async (req, res) => {
 
     // â”€â”€ Fetch current draft payroll records for these employees â”€â”€
     const drafts = await client.query(
-      `SELECT pr.*, e.age, e.hourly_rate, e.salary
+      `SELECT pr.*, e.age, e.salary
        FROM payroll_records pr
        JOIN employees e ON pr.employee_id = e.id
        WHERE pr.company_id = $1
@@ -935,7 +935,7 @@ async function checkPublicHoliday(date) {
 
 async function calculateShiftPay(employee, shift, attendance) {
   try {
-    let hourlyRate = employee.hourly_rate;
+    let hourlyRate = employee.salary / 173;
     if (!hourlyRate && employee.salary) hourlyRate = employee.salary / 160;
 
     const totalHours = attendance.total_hours || 8;
@@ -1006,7 +1006,7 @@ async function calculateMonthlyShiftPay(companyId, employeeId, month, year) {
     const shifts = await db.query(
       `SELECT es.*, st.base_rate_multiplier, st.is_night_shift,
               ar.clock_in, ar.clock_out, ar.total_hours,
-              e.hourly_rate, e.salary
+              e.salary
        FROM employee_shifts es
        JOIN shift_templates st ON es.shift_template_id = st.id
        LEFT JOIN attendance_records ar ON es.attendance_record_id = ar.id
@@ -1102,4 +1102,7 @@ exports.calculateShiftPay = calculateShiftPay;
 exports.calculateNightHours = calculateNightHours;
 exports.checkPublicHoliday = checkPublicHoliday;
 exports.calculateMonthlyShiftPay = calculateMonthlyShiftPay;
+
+
+
 
