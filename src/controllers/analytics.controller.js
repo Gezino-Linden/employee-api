@@ -625,6 +625,26 @@ exports.getRevenueAnalytics = async (req, res) => {
       ORDER BY month
     `, [companyId, targetYear]);
 
+    // Daily revenue breakdown
+    const dailyQuery = await db.query(`
+      SELECT
+        revenue_date,
+        total_revenue,
+        rooms_revenue,
+        fb_revenue,
+        spa_revenue,
+        events_revenue,
+        other_revenue,
+        occupancy_rate,
+        rooms_occupied,
+        rooms_available,
+        total_costs,
+        TRIM(TO_CHAR(revenue_date, 'Day')) as day_name
+      FROM daily_revenue
+      WHERE company_id = $1 AND EXTRACT(YEAR FROM revenue_date) = $2
+      ORDER BY revenue_date ASC
+    `, [companyId, targetYear]);
+
     // Merge revenue and labour by month
     const monthlyData = revenueQuery.rows.map(rev => {
       const labour = labourQuery.rows.find(l => parseInt(l.month) === parseInt(rev.month));
@@ -657,6 +677,7 @@ exports.getRevenueAnalytics = async (req, res) => {
 
     return res.json({
       monthlyData,
+      dailyRevenue: dailyQuery.rows,
       summary: {
         total_revenue: totalRevenue.toFixed(2),
         total_labour_cost: totalLabour.toFixed(2),
@@ -670,6 +691,7 @@ exports.getRevenueAnalytics = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch revenue analytics" });
   }
 };
+
 
 
 
