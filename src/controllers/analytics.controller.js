@@ -620,7 +620,7 @@ exports.getRevenueAnalytics = async (req, res) => {
       FROM payroll_records
       WHERE company_id = $1 AND year = $2 AND status IN ('processed', 'paid')
       GROUP BY month
-      ORDER BY pay_month
+      ORDER BY month
     `, [companyId, targetYear]);
 
     // Merge revenue and labour by month
@@ -666,6 +666,7 @@ exports.getRevenueAnalytics = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch revenue analytics" });
   }
 };
+
 
 
 
