@@ -12,4 +12,7 @@ router.get("/compliance", requireAuth, requireRoles("admin", "manager"), require
 router.get("/hr-insights", requireAuth, requireRoles("admin", "manager"), requireFeature("labour_dashboards"), analyticsController.getHRInsights);
 router.get("/export", requireAuth, requireRoles("admin", "manager"), requireFeature("advanced_reporting"), analyticsController.exportReport);
 
+router.get("/revenue", requireAuth, requireRoles("admin", "manager"), requireFeature("department_analytics"), analyticsController.getRevenueAnalytics);
+
 module.exports = router;
+

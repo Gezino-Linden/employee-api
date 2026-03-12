@@ -1,4 +1,4 @@
-// File: src/controllers/analytics.controller.js
+﻿// File: src/controllers/analytics.controller.js
 const db = require("../db");
 
 // =====================================================
@@ -584,4 +584,87 @@ async function getComplianceReport(companyId, year) {
   // Implementation here
   return { message: "Compliance report data" };
 }
+
+
+// =====================================================
+// REVENUE vs LABOUR ANALYTICS
+// =====================================================
+exports.getRevenueAnalytics = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+    const { year } = req.query;
+    const targetYear = parseInt(year) || new Date().getFullYear();
+
+    // Monthly revenue from daily_revenue table
+    const revenueQuery = await db.query(`
+      SELECT
+        EXTRACT(MONTH FROM revenue_date) as month,
+        SUM(total_revenue) as total_revenue,
+        SUM(rooms_revenue) as rooms_revenue,
+        SUM(fb_revenue) as fb_revenue,
+        SUM(other_revenue) as other_revenue,
+        AVG(occupancy_rate) as avg_occupancy,
+        COUNT(*) as days_recorded
+      FROM daily_revenue
+      WHERE company_id = $1 AND EXTRACT(YEAR FROM revenue_date) = $2
+      GROUP BY EXTRACT(MONTH FROM revenue_date)
+      ORDER BY month
+    `, [companyId, targetYear]);
+
+    // Monthly labour cost from payroll_records
+    const labourQuery = await db.query(`
+      SELECT
+        pay_month as month,
+        SUM(gross_pay) as total_labour_cost,
+        COUNT(DISTINCT employee_id) as headcount
+      FROM payroll_records
+      WHERE company_id = $1 AND pay_year = $2 AND status = 'paid'
+      GROUP BY pay_month
+      ORDER BY pay_month
+    `, [companyId, targetYear]);
+
+    // Merge revenue and labour by month
+    const monthlyData = revenueQuery.rows.map(rev => {
+      const labour = labourQuery.rows.find(l => parseInt(l.month) === parseInt(rev.month));
+      const totalRevenue = parseFloat(rev.total_revenue) || 0;
+      const labourCost = labour ? parseFloat(labour.total_labour_cost) : 0;
+      const labourPct = totalRevenue > 0 ? (labourCost / totalRevenue * 100) : 0;
+      const headcount = labour ? parseInt(labour.headcount) : 0;
+      const revenuePerEmployee = headcount > 0 ? totalRevenue / headcount : 0;
+      return {
+        month: parseInt(rev.month),
+        total_revenue: totalRevenue.toFixed(2),
+        rooms_revenue: parseFloat(rev.rooms_revenue || 0).toFixed(2),
+        fb_revenue: parseFloat(rev.fb_revenue || 0).toFixed(2),
+        other_revenue: parseFloat(rev.other_revenue || 0).toFixed(2),
+        avg_occupancy: parseFloat(rev.avg_occupancy || 0).toFixed(1),
+        days_recorded: parseInt(rev.days_recorded),
+        labour_cost: labourCost.toFixed(2),
+        headcount,
+        labour_pct: labourPct.toFixed(1),
+        revenue_per_employee: revenuePerEmployee.toFixed(2),
+        flag: labourPct > 40 ? 'danger' : labourPct > 32 ? 'warning' : 'good'
+      };
+    });
+
+    // Totals
+    const totalRevenue = revenueQuery.rows.reduce((s, r) => s + parseFloat(r.total_revenue || 0), 0);
+    const totalLabour = labourQuery.rows.reduce((s, l) => s + parseFloat(l.total_labour_cost || 0), 0);
+
+    return res.json({
+      monthlyData,
+      summary: {
+        total_revenue: totalRevenue.toFixed(2),
+        total_labour_cost: totalLabour.toFixed(2),
+        overall_labour_pct: totalRevenue > 0 ? (totalLabour / totalRevenue * 100).toFixed(1) : '0',
+        benchmark_min: '28',
+        benchmark_max: '35'
+      }
+    });
+  } catch (err) {
+    console.error("ERROR in getRevenueAnalytics:", err);
+    return res.status(500).json({ error: "Failed to fetch revenue analytics" });
+  }
+};
+
 
