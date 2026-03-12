@@ -614,12 +614,12 @@ exports.getRevenueAnalytics = async (req, res) => {
     // Monthly labour cost from payroll_records
     const labourQuery = await db.query(`
       SELECT
-        pay_month as month,
+        month,
         SUM(gross_pay) as total_labour_cost,
         COUNT(DISTINCT employee_id) as headcount
       FROM payroll_records
-      WHERE company_id = $1 AND pay_year = $2 AND status = 'paid'
-      GROUP BY pay_month
+      WHERE company_id = $1 AND year = $2 AND status IN ('processed', 'paid')
+      GROUP BY month
       ORDER BY pay_month
     `, [companyId, targetYear]);
 
@@ -666,5 +666,6 @@ exports.getRevenueAnalytics = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch revenue analytics" });
   }
 };
+
 
 
