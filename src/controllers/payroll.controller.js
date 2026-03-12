@@ -301,9 +301,9 @@ exports.updatePayrollRecord = async (req, res) => {
        SET allowances = $1, bonuses = $2, overtime = $3,
            medical_aid = $4, other_deductions = $5,
            notes = COALESCE($6, notes),
-           tax = $7, total_deductions = $8, net_pay = $9,
+           tax = $7,
            updated_at = NOW()
-       WHERE id = $10 RETURNING *`,
+       WHERE id = $8 RETURNING *`,
       [
         newAllowances,
         newBonuses,
@@ -312,8 +312,6 @@ exports.updatePayrollRecord = async (req, res) => {
         newOtherDeductions,
         notes,
         newTax,
-        newTotalDeductions,
-        newNet,
         recordId,
       ]
     );
@@ -469,17 +467,13 @@ exports.processPayroll = async (req, res) => {
          SET status           = 'processed',
              overtime         = $1,
              tax              = $2,
-             total_deductions = $3,
-             net_pay          = $4,
              updated_at       = NOW()
-         WHERE id         = $5
-           AND company_id = $6
+         WHERE id         = $3
+           AND company_id = $4
          RETURNING id, employee_id`,
         [
           newOvertime,
           newTax,
-          newTotalDeductions,
-          newNet,
           record.id,
           companyId,
         ]
