@@ -602,6 +602,8 @@ exports.getRevenueAnalytics = async (req, res) => {
         SUM(total_revenue) as total_revenue,
         SUM(rooms_revenue) as rooms_revenue,
         SUM(fb_revenue) as fb_revenue,
+        SUM(spa_revenue) as spa_revenue,
+        SUM(events_revenue) as events_revenue,
         SUM(other_revenue) as other_revenue,
         AVG(occupancy_rate) as avg_occupancy,
         COUNT(*) as days_recorded
@@ -636,6 +638,8 @@ exports.getRevenueAnalytics = async (req, res) => {
         total_revenue: totalRevenue.toFixed(2),
         rooms_revenue: parseFloat(rev.rooms_revenue || 0).toFixed(2),
         fb_revenue: parseFloat(rev.fb_revenue || 0).toFixed(2),
+        spa_revenue: parseFloat(rev.spa_revenue || 0).toFixed(2),
+        events_revenue: parseFloat(rev.events_revenue || 0).toFixed(2),
         other_revenue: parseFloat(rev.other_revenue || 0).toFixed(2),
         avg_occupancy: parseFloat(rev.avg_occupancy || 0).toFixed(1),
         days_recorded: parseInt(rev.days_recorded),
@@ -666,6 +670,7 @@ exports.getRevenueAnalytics = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch revenue analytics" });
   }
 };
+
 
 
 
