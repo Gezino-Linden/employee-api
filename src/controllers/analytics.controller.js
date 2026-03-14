@@ -732,13 +732,10 @@ exports.getTipsAnalytics = async (req, res) => {
 
     const summary = await db.query(`
       SELECT
-        COALESCE(SUM(total_amount), 0) as total_tips,
-        COALESCE(AVG(total_amount), 0) as avg_monthly,
-        MAX(total_amount) as best_month,
+        total_amount as best_month,
         TO_CHAR(period_start, 'Mon YYYY') as best_month_label
       FROM tip_pools
       WHERE company_id = $1
-      GROUP BY period_start
       ORDER BY total_amount DESC
       LIMIT 1`, [companyId]);
 
@@ -762,4 +759,5 @@ exports.getTipsAnalytics = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch tips analytics" });
   }
 };
+
 
