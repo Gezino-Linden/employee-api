@@ -14,5 +14,7 @@ router.get("/export", requireAuth, requireRoles("admin", "manager"), requireFeat
 
 router.get("/revenue", requireAuth, requireRoles("admin", "manager"), requireFeature("department_analytics"), analyticsController.getRevenueAnalytics);
 
+router.get("/tips", requireAuth, requireRoles("admin", "manager"), requireFeature("department_analytics"), analyticsController.getTipsAnalytics);
 module.exports = router;
+
 

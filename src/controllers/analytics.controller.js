@@ -698,3 +698,68 @@ exports.getRevenueAnalytics = async (req, res) => {
 
 
 
+
+// Tips Analytics
+exports.getTipsAnalytics = async (req, res) => {
+  const companyId = req.user.company_id;
+  const year = parseInt(req.query.year) || new Date().getFullYear();
+  try {
+    const monthlyTrend = await db.query(`
+      SELECT
+        TO_CHAR(period_start, 'Mon YYYY') as month_label,
+        EXTRACT(MONTH FROM period_start) as month,
+        EXTRACT(YEAR FROM period_start) as year,
+        SUM(total_amount) as total_tips,
+        COUNT(*) as pool_count
+      FROM tip_pools
+      WHERE company_id = $1
+      GROUP BY period_start
+      ORDER BY period_start`, [companyId]);
+
+    const employeeSummary = await db.query(`
+      SELECT
+        e.first_name || ' ' || e.last_name as name,
+        e.department,
+        e.position,
+        COUNT(ta.id) as months_count,
+        COALESCE(SUM(ta.amount_allocated), 0) as total_tips,
+        COALESCE(AVG(ta.amount_allocated), 0) as avg_monthly
+      FROM tip_allocations ta
+      JOIN employees e ON e.id = ta.employee_id
+      WHERE e.company_id = $1
+      GROUP BY e.id, e.first_name, e.last_name, e.department, e.position
+      ORDER BY total_tips DESC`, [companyId]);
+
+    const summary = await db.query(`
+      SELECT
+        COALESCE(SUM(total_amount), 0) as total_tips,
+        COALESCE(AVG(total_amount), 0) as avg_monthly,
+        MAX(total_amount) as best_month,
+        TO_CHAR(period_start, 'Mon YYYY') as best_month_label
+      FROM tip_pools
+      WHERE company_id = $1
+      GROUP BY period_start
+      ORDER BY total_amount DESC
+      LIMIT 1`, [companyId]);
+
+    const totals = await db.query(`
+      SELECT
+        COALESCE(SUM(total_amount), 0) as total_tips,
+        COALESCE(AVG(total_amount), 0) as avg_monthly,
+        COUNT(DISTINCT id) as pool_count
+      FROM tip_pools
+      WHERE company_id = $1`, [companyId]);
+
+    return res.json({
+      monthlyTrend: monthlyTrend.rows,
+      employeeSummary: employeeSummary.rows,
+      topMonth: summary.rows[0] || null,
+      totals: totals.rows[0] || null,
+      recipientCount: employeeSummary.rows.length
+    });
+  } catch (err) {
+    console.error("ERROR in getTipsAnalytics:", err);
+    return res.status(500).json({ error: "Failed to fetch tips analytics" });
+  }
+};
+
