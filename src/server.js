@@ -63,8 +63,7 @@ app.set("trust proxy", 1);
 const allowedOrigins = [
   "http://localhost:4200",
   "http://127.0.0.1:4200",
-  "https://gentle-kulfi-c11ec3.netlify.app",
-];
+].concat(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",").map(function(o){return o.trim();}) : []);
 
 const corsOptions = {
   origin: (origin, cb) => {
