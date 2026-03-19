@@ -708,8 +708,7 @@ exports.getTipsAnalytics = async (req, res) => {
         EXTRACT(MONTH FROM tp.period_start) as month,
         SUM(tp.total_amount) as total_tips
       FROM tip_pools tp
-      JOIN properties p ON p.id = tp.property_id
-      WHERE p.company_id = $1
+      WHERE tp.company_id = $1
       GROUP BY tp.period_start ORDER BY tp.period_start`, [companyId]);
 
     const employeeSummary = await db.query(`
@@ -728,8 +727,7 @@ exports.getTipsAnalytics = async (req, res) => {
       SELECT tp.total_amount as best_month,
         TO_CHAR(tp.period_start, 'Mon YYYY') as best_month_label
       FROM tip_pools tp
-      JOIN properties p ON p.id = tp.property_id
-      WHERE p.company_id = $1
+      WHERE tp.company_id = $1
       ORDER BY tp.total_amount DESC LIMIT 1`, [companyId]);
 
     const totals = await db.query(`
@@ -737,8 +735,7 @@ exports.getTipsAnalytics = async (req, res) => {
         COALESCE(AVG(tp.total_amount), 0) as avg_monthly,
         COUNT(DISTINCT tp.id) as pool_count
       FROM tip_pools tp
-      JOIN properties p ON p.id = tp.property_id
-      WHERE p.company_id = $1`, [companyId]);
+      WHERE tp.company_id = $1`, [companyId]);
 
     return res.json({
       monthlyTrend: monthlyTrend.rows,
