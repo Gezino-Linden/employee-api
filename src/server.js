@@ -1,4 +1,5 @@
-﻿// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+﻿require("./instrument");
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // STEP 1: ENVIRONMENT & VALIDATION (MUST BE FIRST)
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
@@ -21,6 +22,7 @@ const swaggerSpec = require("./swagger");
 
 const logger = require("./utils/logger");
 const { errorHandler, notFoundHandler } = require("./middleware/errorHandler");
+const Sentry = require("./instrument");
 const { apiLimiter, authLimiter } = require("./middleware/rateLimiter");
 const cache = require("./utils/cache");
 const db = require("./db");
@@ -221,6 +223,8 @@ app.listen(PORT, () => {
   logger.info(`ðŸ”’ Security: Rate limiting enabled`);
   logger.info(`ðŸ“ API Docs: http://localhost:${PORT}/api-docs`);
 });
+
+
 
 
 
