@@ -1,4 +1,4 @@
-const db = require("../db");
+﻿const db = require("../db");
 const ExcelJS = require("exceljs");
 const { Parser } = require("json2csv");
 
@@ -489,7 +489,7 @@ exports.getSalaryHistory = async (req, res) => {
     return res.status(500).json({ error: "get salary history failed" });
   }
 };
-// ── GET DEPARTMENTS ────────────────────────────────────────────────────────
+// â”€â”€ GET DEPARTMENTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getDepartments = async (req, res) => {
   try {
     const companyId = req.user.company_id;
