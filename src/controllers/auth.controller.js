@@ -1,4 +1,4 @@
-// src/controllers/auth.controller.js — Full version with license key + password reset
+﻿// src/controllers/auth.controller.js â€” Full version with license key + password reset
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const db = require("../db");
@@ -7,10 +7,11 @@ const nodemailer = require("nodemailer");
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 const JWT_EXPIRY = process.env.JWT_EXPIRY || "8h";
+const REFRESH_EXPIRY_DAYS = 30;
 const FRONTEND_URL =
   process.env.FRONTEND_URL || "https://gentle-kulfi-c11ec3.netlify.app";
 
-// ── Email transporter ─────────────────────────────────────────────────────────
+// â”€â”€ Email transporter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function getTransporter() {
   return nodemailer.createTransport({
     service: "gmail",
@@ -21,7 +22,7 @@ function getTransporter() {
   });
 }
 
-// ── Validators ────────────────────────────────────────────────────────────────
+// â”€â”€ Validators â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function validatePassword(password) {
   const errors = [];
   if (!password || password.length < 8) errors.push("at least 8 characters");
@@ -45,7 +46,7 @@ function slugifyCompany(name) {
     .slice(0, 80);
 }
 
-// ── REGISTER ──────────────────────────────────────────────────────────────────
+// â”€â”€ REGISTER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.register = async (req, res) => {
   const { name, email, password, companyName, licenseKey } = req.body;
 
@@ -173,7 +174,7 @@ exports.register = async (req, res) => {
   }
 };
 
-// ── LOGIN ─────────────────────────────────────────────────────────────────────
+// â”€â”€ LOGIN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.login = async (req, res) => {
   const { email, password } = req.body;
   if (!email || !email.includes("@"))
@@ -228,7 +229,7 @@ exports.login = async (req, res) => {
   }
 };
 
-// ── FORGOT PASSWORD ───────────────────────────────────────────────────────────
+// â”€â”€ FORGOT PASSWORD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
   if (!email || !email.includes("@"))
@@ -286,10 +287,10 @@ exports.forgotPassword = async (req, res) => {
         });
       } catch (emailErr) {
         console.error("Email send failed:", emailErr.message);
-        // Don't fail the request if email fails — log it
+        // Don't fail the request if email fails â€” log it
       }
     } else {
-      // No email configured — log token for manual sending (dev/early prod)
+      // No email configured â€” log token for manual sending (dev/early prod)
       console.log(`[PASSWORD RESET] Token for ${user.email}: ${rawToken}`);
       console.log(`[PASSWORD RESET] Reset URL: ${resetUrl}`);
     }
@@ -305,7 +306,7 @@ exports.forgotPassword = async (req, res) => {
   }
 };
 
-// ── RESET PASSWORD ────────────────────────────────────────────────────────────
+// â”€â”€ RESET PASSWORD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.resetPassword = async (req, res) => {
   const { token, password } = req.body;
 
@@ -371,7 +372,7 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
-// ── ACCEPT INVITE ─────────────────────────────────────────────────────────────
+// â”€â”€ ACCEPT INVITE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.acceptInvite = async (req, res) => {
   const { token, name, password } = req.body;
 
@@ -449,7 +450,7 @@ exports.acceptInvite = async (req, res) => {
   }
 };
 
-// ── LICENSE KEY VALIDATOR ─────────────────────────────────────────────────────
+// â”€â”€ LICENSE KEY VALIDATOR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.validateKey = async (req, res) => {
   const { key } = req.body;
   if (!key) return res.status(400).json({ error: "Key required" });
@@ -486,3 +487,25 @@ exports.validateKey = async (req, res) => {
 };
 
 exports.validatePassword = validatePassword;
+
+exports.refreshToken = async (req, res) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) return res.status(400).json({ error: "Refresh token required" });
+  try {
+    const result = await db.query(
+      "SELECT rt.*, u.id as uid, u.email, u.role, u.company_id, u.name, p.name as plan_name FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id LEFT JOIN plans p ON p.id = u.plan_id WHERE rt.token = $1 AND rt.expires_at > NOW()",
+      [refreshToken]
+    );
+    if (!result.rows.length) return res.status(401).json({ error: "Invalid or expired refresh token" });
+    const user = result.rows[0];
+    const token = jwt.sign(
+      { id: user.uid, email: user.email, role: user.role, company_id: user.company_id, plan: user.plan_name },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRY }
+    );
+    return res.json({ token, expiresIn: JWT_EXPIRY });
+  } catch (err) {
+    console.error("Refresh token error:", err);
+    return res.status(500).json({ error: "Token refresh failed" });
+  }
+};

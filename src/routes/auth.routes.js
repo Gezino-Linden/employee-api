@@ -1,4 +1,4 @@
-// src/routes/auth.routes.js
+﻿// src/routes/auth.routes.js
 const express = require("express");
 const router = express.Router();
 const auth = require("../controllers/auth.controller");
@@ -11,4 +11,6 @@ router.post("/validate-key", apiLimiter, auth.validateKey);
 router.post("/forgot-password", authLimiter, auth.forgotPassword);
 router.post("/reset-password", apiLimiter, auth.resetPassword);
 
+router.post("/refresh", authController.refreshToken);
 module.exports = router;
+
