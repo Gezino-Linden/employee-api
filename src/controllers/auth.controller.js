@@ -1,5 +1,5 @@
 // src/controllers/auth.controller.js — Full version with license key + password reset
-const bcrypt = require("bcryptjs");
+const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const db = require("../db");
 const crypto = require("crypto");
