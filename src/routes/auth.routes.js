@@ -11,6 +11,7 @@ router.post("/validate-key", apiLimiter, auth.validateKey);
 router.post("/forgot-password", authLimiter, auth.forgotPassword);
 router.post("/reset-password", apiLimiter, auth.resetPassword);
 
-router.post("/refresh", authController.refreshToken);
+router.post("/refresh", auth.refreshToken);
 module.exports = router;
+
 
