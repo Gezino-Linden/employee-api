@@ -1,4 +1,4 @@
-// File: src/utils/logger.js
+﻿// File: src/utils/logger.js
 const winston = require("winston");
 const path = require("path");
 
@@ -100,9 +100,11 @@ logger.logError = (error, req = null) => {
     errorLog.url = req.url;
     errorLog.body = req.body;
     errorLog.userId = req.user?.id;
+    errorLog.requestId = req.id;
   }
 
   logger.error("Error occurred", errorLog);
 };
 
 module.exports = logger;
+
