@@ -14,7 +14,9 @@
   "license": "ISC",
   "dependencies": {
     "@sentry/node": "^10.45.0",
+    "@types/cookie-parser": "^1.4.10",
     "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.2.4",
     "exceljs": "^4.4.0",

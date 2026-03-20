@@ -55,11 +55,17 @@ const ROLE_PERMISSIONS = {
 };
 
 function requireAuth(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
+  // Read token from httpOnly cookie first, fall back to Authorization header
+  let token = req.cookies?.accessToken;
+  if (!token) {
+    const header = req.headers.authorization;
+    if (header && header.startsWith("Bearer ")) {
+      token = header.split(" ")[1].trim();
+    }
+  }
+  if (!token) {
     return res.status(401).json({ error: "missing token" });
   }
-  const token = header.split(" ")[1].trim();
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     req.user = payload; // { id, email, role, company_id, department_id, iat, exp }

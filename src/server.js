@@ -22,6 +22,7 @@ const swaggerSpec = require("./swagger");
 
 const logger = require("./utils/logger");
 const { errorHandler, notFoundHandler } = require("./middleware/errorHandler");
+const cookieParser = require("cookie-parser");
 const Sentry = require("./instrument");
 const { apiLimiter, authLimiter } = require("./middleware/rateLimiter");
 const cache = require("./utils/cache");
@@ -79,6 +80,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.use(cookieParser());
 
 // Request ID middleware
 const { v4: uuidv4 } = require("uuid");
@@ -223,6 +225,7 @@ app.listen(PORT, () => {
   logger.info(`ðŸ”’ Security: Rate limiting enabled`);
   logger.info(`ðŸ“ API Docs: http://localhost:${PORT}/api-docs`);
 });
+
 
 
 

@@ -211,8 +211,26 @@ exports.login = async (req, res) => {
       { expiresIn: JWT_EXPIRY }
     );
 
+    const refreshToken = crypto.randomBytes(64).toString("hex");
+    const expiresAt = new Date(Date.now() + REFRESH_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+    await db.query(
+      "INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3) ON CONFLICT (token) DO NOTHING",
+      [user.id, refreshToken, expiresAt]
+    );
+    const isProduction = process.env.NODE_ENV === "production";
+    res.cookie("accessToken", token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
+      maxAge: 8 * 60 * 60 * 1000
+    });
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
+      maxAge: REFRESH_EXPIRY_DAYS * 24 * 60 * 60 * 1000
+    });
     return res.json({
-      token,
       user: {
         id: user.id,
         name: user.name,
@@ -220,8 +238,7 @@ exports.login = async (req, res) => {
         role: user.role,
         company_id: user.company_id,
         plan: user.plan_name,
-      },
-      expiresIn: JWT_EXPIRY,
+      }
     });
   } catch (err) {
     console.error("Login error:", err);
