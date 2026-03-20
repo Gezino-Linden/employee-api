@@ -226,8 +226,4 @@ app.listen(PORT, () => {
   logger.info(`ðŸ“ API Docs: http://localhost:${PORT}/api-docs`);
 });
 
-
-
-
-
-
+module.exports = app;
