@@ -510,7 +510,7 @@ exports.refreshToken = async (req, res) => {
   if (!refreshToken) return res.status(400).json({ error: "Refresh token required" });
   try {
     const result = await db.query(
-      "SELECT rt.*, u.id as uid, u.email, u.role, u.company_id, u.name, p.name as plan_name FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id LEFT JOIN plans p ON p.id = u.plan_id WHERE rt.token = $1 AND rt.expires_at > NOW()",
+      "SELECT rt.*, u.id as uid, u.email, u.role, u.company_id, u.name FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id WHERE rt.token = $1 AND rt.expires_at > NOW()",
       [refreshToken]
     );
     if (!result.rows.length) return res.status(401).json({ error: "Invalid or expired refresh token" });
